@@ -1,3 +1,5 @@
+**alwhays see in code mode** 
+
 tradevision-ai/
 ├── backend/
 │   ├── app/
