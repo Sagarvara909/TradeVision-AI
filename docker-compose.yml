@@ -1,0 +1,16 @@
+﻿services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: tradevision-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tradevision
+      POSTGRES_PASSWORD: tradevision_dev_pw
+      POSTGRES_DB: tradevision_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - tradevision_pgdata:/var/lib/postgresql/data
+
+volumes:
+  tradevision_pgdata:
