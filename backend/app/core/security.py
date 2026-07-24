@@ -1,9 +1,39 @@
 from datetime import datetime, timedelta
 from passlib.context import CryptContext
 from jose import jwt
-
 from app.core.config import Settings
+from fastapi import Depends, HTTPException, status 
+from fastapi.security import OAuth2PasswordBearer 
+from jose import JWTError, jwt 
+from sqlalchemy.orm import Session 
+from app.infrastructure.db.session import get_db 
+from app.domain.models import User
 settings = Settings()
+import secrets 
+from datetime import datetime, timedelta
+from app.domain.models import RefreshToken 
+oauth2_schema= OAuth2PasswordBearer(tokenUrl="/api/v1/auth/Login")
+
+def get_current_user(
+        token: str = Depends(oauth2_schema), db: Session = Depends(get_db),
+    ) -> User:
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authentication": "Bearer"},
+    )
+    try:
+        payLoad = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+        user_id: str = payLoad.get("sub")
+        if user_id is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None:
+        raise credentials_exception
+    return user
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -20,3 +50,14 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
     )
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
+
+def create_refresh_token(user_id: str, db:Session, expires_days: int =7) -> str:
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = pwd_context.hash(raw_token)
+    expires_at = datetime.utcnow() + timedelta(days=expires_days)
+
+    db_token = RefreshToken(user_id=user_id, token_hash=token_hash, expires_at=expires_at)
+    db.add(db_token)
+    db.commit()
+
+    return raw_token
