@@ -24,7 +24,7 @@ export default function RegisterPage() {
     try {
       await registerUser(email, password);
       setSuccess(true);
-      setTimeout(() => router.push("/login"), 1200);
+      setTimeout(() => router.push("/login"), 1000);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
@@ -78,7 +78,7 @@ export default function RegisterPage() {
             </p>
           </form>
                 <p className="text-sm text-center text-gray-400 mt-4">
-  Don&apos;t have an account?{" "}
+  Don't have an account?{" "}
   <Link href="/register" className="underline">
     Register
   </Link>
