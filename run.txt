@@ -1,0 +1,10 @@
+first run docker in system 
+docker compose up -d 
+docker ps -a
+
+cd backend 
+uvicorn app.main:app --reload
+
+new terminal 
+cd frontend
+npm run dev 

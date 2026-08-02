@@ -24,4 +24,9 @@ class TokenResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     
-    
+class OCRResult(BaseModel):
+    image_id: str
+    symbol: str | None
+    exchange: str | None
+    timeframe: str | None
+    raw_text_count: int

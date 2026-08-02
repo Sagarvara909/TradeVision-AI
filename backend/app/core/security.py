@@ -1,47 +1,29 @@
 from datetime import datetime, timedelta
-from passlib.context import CryptContext
-from jose import jwt
-from app.core.config import Settings
-from fastapi import Depends, HTTPException, status 
-from fastapi.security import OAuth2PasswordBearer 
-from jose import JWTError, jwt 
-from sqlalchemy.orm import Session 
-from app.infrastructure.db.session import get_db 
-from app.domain.models import User
-settings = Settings()
-import secrets 
-from datetime import datetime, timedelta
-from app.domain.models import RefreshToken 
-oauth2_schema= OAuth2PasswordBearer(tokenUrl="/api/v1/auth/Login")
+import secrets
 
-def get_current_user(
-        token: str = Depends(oauth2_schema), db: Session = Depends(get_db),
-    ) -> User:
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authentication": "Bearer"},
-    )
-    try:
-        payLoad = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
-        user_id: str = payLoad.get("sub")
-        if user_id is None:
-            raise credentials_exception
-    except JWTError:
-        raise credentials_exception
-    
-    user = db.query(User).filter(User.id == user_id).first()
-    if user is None:
-        raise credentials_exception
-    return user
+from passlib.context import CryptContext
+from jose import jwt, JWTError
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy.orm import Session
+
+from app.core.config import Settings
+from app.infrastructure.db.session import get_db
+from app.domain.models import User, RefreshToken
+
+settings = Settings()
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+bearer_scheme = HTTPBearer()
+
 
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)
 
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
+
 
 def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     to_encode = data.copy()
@@ -51,7 +33,8 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
 
-def create_refresh_token(user_id: str, db:Session, expires_days: int =7) -> str:
+
+def create_refresh_token(user_id: str, db: Session, expires_days: int = 7) -> str:
     raw_token = secrets.token_urlsafe(32)
     token_hash = pwd_context.hash(raw_token)
     expires_at = datetime.utcnow() + timedelta(days=expires_days)
@@ -61,3 +44,29 @@ def create_refresh_token(user_id: str, db:Session, expires_days: int =7) -> str:
     db.commit()
 
     return raw_token
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    db: Session = Depends(get_db),
+) -> User:
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    token = credentials.credentials
+
+    try:
+        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None:
+        raise credentials_exception
+    return user
