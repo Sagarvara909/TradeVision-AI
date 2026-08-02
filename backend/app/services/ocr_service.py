@@ -36,20 +36,29 @@ TIMEFRAME_PATTERN = re.compile(r"\b(1m|3m|5m|15m|30m|1h|4h|1d|1w|1M)\b", re.IGNO
 # OCR frequently misreads the "O" in "Open" as a digit "0" — match both
 OHLC_PATTERN = re.compile(r"^[O0]\d+\.\d+\s*H\d+\.\d+\s*L\d+\.\d+", re.IGNORECASE)
 
+BLACKLIST = {
+    "NIFTY", "SENSEX", "BUY", "SELL", "SAVE", "WATCHLIST", "PORTFOLIO",
+    "ORDERS", "POSITIONS", "TOOLS", "MARKETS", "CHART", "OVERVIEW",
+    "SCALPER", "MODE", "INDICATORS", "SEARCH", "TRADEONE",
+}
+
+
 def parse_chart_metadata(texts: list[str]) -> dict:
     """
     Extract symbol, exchange, and timeframe from raw OCR text lines.
 
-    Strategy: anchor on the OHLC price line, which reliably appears directly
-    below the main chart's symbol/exchange label. Search backward from that
-    anchor for the nearest line that actually contains a known exchange
-    keyword — this avoids picking up unrelated buttons or labels sitting
-    near the chart.
+    Three-tier strategy, most reliable first:
+      1. Anchor on the OHLC price line (most reliable, when present).
+      2. Look for a line with a colon near an exchange keyword — the
+         primary chart label uses "SYMBOL # : EXCHANGE", while sidebar
+         watchlist rows never contain a colon.
+      3. Bare all-caps word scan, excluding known dashboard chrome terms.
     """
     symbol = None
     exchange = None
     timeframe = None
 
+    # Tier 1: OHLC anchor
     ohlc_index = None
     for i, text in enumerate(texts):
         if OHLC_PATTERN.search(text.strip()):
@@ -65,20 +74,31 @@ def parse_chart_metadata(texts: list[str]) -> dict:
                 for token in tokens:
                     if token in KNOWN_EXCHANGES:
                         exchange = token
-                    elif not symbol and 2 <= len(token) <= 10:
+                    elif not symbol and token not in BLACKLIST and 2 <= len(token) <= 10:
                         symbol = token
                 break
 
+    # Tier 2: colon + exchange keyword, anywhere in the text
     if not symbol:
         for text in texts:
             cleaned = text.strip().upper()
-            if ":" in cleaned:
-                parts = cleaned.split(":")
-                if len(parts) == 2 and parts[0] in KNOWN_EXCHANGES:
-                    exchange = parts[0]
-                    symbol = parts[1]
+            if ":" not in cleaned:
+                continue
+            tokens = re.findall(r"[A-Z]+", cleaned)
+            if any(t in KNOWN_EXCHANGES for t in tokens):
+                for token in tokens:
+                    if token in KNOWN_EXCHANGES:
+                        exchange = token
+                    elif not symbol and token not in BLACKLIST and 2 <= len(token) <= 10:
+                        symbol = token
+                if symbol:
                     break
-            if re.fullmatch(r"[A-Z]{2,6}", cleaned):
+
+    # Tier 3: last-resort bare word scan, blacklist-aware
+    if not symbol:
+        for text in texts:
+            cleaned = text.strip().upper()
+            if re.fullmatch(r"[A-Z]{2,6}", cleaned) and cleaned not in BLACKLIST:
                 symbol = cleaned
                 break
 

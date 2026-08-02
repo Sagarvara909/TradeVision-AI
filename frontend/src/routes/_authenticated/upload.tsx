@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
+import { api, ApiError, type OCRResult } from "@/lib/api";
 
 export const Route = createFileRoute("/_authenticated/upload")({
   head: () => ({
@@ -21,6 +22,7 @@ function UploadPage() {
   const [preview, setPreview] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [processing, setProcessing] = useState(false);
+  const [result, setResult] = useState<OCRResult | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -46,6 +48,7 @@ function UploadPage() {
       toast.error("File too large", { description: "Max 8 MB." });
       return;
     }
+    setResult(null);
     setFile(f);
   };
 
@@ -58,14 +61,25 @@ function UploadPage() {
   const analyze = async () => {
     if (!file) return;
     setProcessing(true);
-    // Backend analysis endpoint is not built yet.
-    // Show a real loading state, then a "processing" placeholder — never fabricate results.
-    await new Promise((r) => setTimeout(r, 1600));
-    setProcessing(false);
-    toast("Analysis engine coming soon", {
-      description:
-        "The OCR + technical analysis pipeline is under construction. Your upload was accepted for preview.",
-    });
+    setResult(null);
+    try {
+      const data = await api.ocr.upload(file);
+      setResult(data);
+      if (!data.symbol) {
+        toast("Couldn't confidently read the chart", {
+          description: "Symbol wasn't detected — you may need to enter it manually.",
+        });
+      } else {
+        toast.success("Chart read successfully", {
+          description: `${data.symbol}${data.exchange ? ` · ${data.exchange}` : ""}${data.timeframe ? ` · ${data.timeframe}` : ""}`,
+        });
+      }
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Something went wrong";
+      toast.error("Upload failed", { description: message });
+    } finally {
+      setProcessing(false);
+    }
   };
 
   return (
@@ -104,6 +118,7 @@ function UploadPage() {
                   onClick={(e) => {
                     e.preventDefault();
                     setFile(null);
+                    setResult(null);
                     if (inputRef.current) inputRef.current.value = "";
                   }}
                   className="absolute right-2 top-2 rounded-md border border-border bg-background/80 p-1.5 text-muted-foreground backdrop-blur hover:text-foreground"
@@ -177,7 +192,7 @@ function UploadPage() {
             </ul>
           </div>
 
-          {processing || file ? (
+          {processing || result || file ? (
             <div className="glass-panel rounded-xl p-5">
               <p className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
                 Analysis preview
@@ -188,6 +203,31 @@ function UploadPage() {
                   <Skeleton className="h-4 w-full" />
                   <Skeleton className="h-4 w-5/6" />
                   <Skeleton className="h-20 w-full" />
+                </div>
+              ) : result ? (
+                <div className="mt-3 space-y-2 text-sm">
+                  <div className="flex justify-between border-b border-border/60 pb-2">
+                    <span className="text-muted-foreground">Symbol</span>
+                    <span className="font-mono text-foreground">
+                      {result.symbol ?? "Not detected"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between border-b border-border/60 pb-2">
+                    <span className="text-muted-foreground">Exchange</span>
+                    <span className="font-mono text-foreground">
+                      {result.exchange ?? "—"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between border-b border-border/60 pb-2">
+                    <span className="text-muted-foreground">Timeframe</span>
+                    <span className="font-mono text-foreground">
+                      {result.timeframe ?? "Not detected"}
+                    </span>
+                  </div>
+                  <p className="pt-1 text-xs text-muted-foreground">
+                    OCR read {result.raw_text_count} text elements from this chart.
+                    {!result.symbol && " You may need to confirm the symbol manually."}
+                  </p>
                 </div>
               ) : (
                 <p className="mt-3 text-sm text-muted-foreground">

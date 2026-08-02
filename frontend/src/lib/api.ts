@@ -101,6 +101,13 @@ export type TokenResponse = {
   refresh_token: string;
   token_type: string;
 };
+export type OCRResult = {
+  image_id: string;
+  symbol: string | null;
+  exchange: string | null;
+  timeframe: string | null;
+  raw_text_count: number;
+};
 
 // ---- Endpoints ----
 export const api = {
@@ -116,5 +123,16 @@ export const api = {
         body: { email, password },
       }),
     me: () => request<User>("/auth/me", { auth: true }),
+  },
+  ocr: {
+    upload: (file: File) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      return request<OCRResult>("/ocr/upload", {
+        method: "POST",
+        body: formData,
+        auth: true,
+      });
+    },
   },
 };
