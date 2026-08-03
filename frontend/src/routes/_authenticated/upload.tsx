@@ -1,8 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState, type DragEvent } from "react";
-import { UploadCloud, ImageIcon, X, Loader2, Sparkles } from "lucide-react";
+import { UploadCloud, ImageIcon, X, Loader2, Sparkles, Pencil } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { api, ApiError, type OCRResult } from "@/lib/api";
@@ -23,6 +25,14 @@ function UploadPage() {
   const [dragOver, setDragOver] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [result, setResult] = useState<OCRResult | null>(null);
+
+  // Editable copies — start out matching OCR result, but the user can
+  // correct them when confidence is low (symbol/timeframe missing).
+  const [editSymbol, setEditSymbol] = useState("");
+  const [editExchange, setEditExchange] = useState("");
+  const [editTimeframe, setEditTimeframe] = useState("");
+  const [editing, setEditing] = useState(false);
+
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -49,6 +59,7 @@ function UploadPage() {
       return;
     }
     setResult(null);
+    setEditing(false);
     setFile(f);
   };
 
@@ -65,9 +76,14 @@ function UploadPage() {
     try {
       const data = await api.ocr.upload(file);
       setResult(data);
+      setEditSymbol(data.symbol ?? "");
+      setEditExchange(data.exchange ?? "");
+      setEditTimeframe(data.timeframe ?? "");
+
       if (!data.symbol) {
+        setEditing(true);
         toast("Couldn't confidently read the chart", {
-          description: "Symbol wasn't detected — you may need to enter it manually.",
+          description: "Please confirm the symbol below before continuing.",
         });
       } else {
         toast.success("Chart read successfully", {
@@ -80,6 +96,21 @@ function UploadPage() {
     } finally {
       setProcessing(false);
     }
+  };
+
+  const confirmDetails = () => {
+    if (!editSymbol.trim()) {
+      toast.error("Symbol is required", {
+        description: "Enter the ticker symbol to continue.",
+      });
+      return;
+    }
+    setEditing(false);
+    toast.success("Details confirmed", {
+      description: `${editSymbol.toUpperCase()}${editExchange ? ` · ${editExchange.toUpperCase()}` : ""}${editTimeframe ? ` · ${editTimeframe}` : ""}`,
+    });
+    // Next module (market data / technical analysis) will consume
+    // editSymbol / editExchange / editTimeframe from here.
   };
 
   return (
@@ -119,6 +150,7 @@ function UploadPage() {
                     e.preventDefault();
                     setFile(null);
                     setResult(null);
+                    setEditing(false);
                     if (inputRef.current) inputRef.current.value = "";
                   }}
                   className="absolute right-2 top-2 rounded-md border border-border bg-background/80 p-1.5 text-muted-foreground backdrop-blur hover:text-foreground"
@@ -194,9 +226,22 @@ function UploadPage() {
 
           {processing || result || file ? (
             <div className="glass-panel rounded-xl p-5">
-              <p className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
-                Analysis preview
-              </p>
+              <div className="flex items-center justify-between">
+                <p className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
+                  Analysis preview
+                </p>
+                {result && !editing ? (
+                  <button
+                    type="button"
+                    onClick={() => setEditing(true)}
+                    className="flex items-center gap-1 text-[11px] text-primary hover:underline"
+                  >
+                    <Pencil className="h-3 w-3" />
+                    Edit
+                  </button>
+                ) : null}
+              </div>
+
               {processing ? (
                 <div className="mt-3 space-y-3">
                   <Skeleton className="h-4 w-3/4" />
@@ -204,29 +249,67 @@ function UploadPage() {
                   <Skeleton className="h-4 w-5/6" />
                   <Skeleton className="h-20 w-full" />
                 </div>
+              ) : result && editing ? (
+                <div className="mt-3 space-y-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="edit-symbol" className="text-xs text-muted-foreground">
+                      Symbol *
+                    </Label>
+                    <Input
+                      id="edit-symbol"
+                      value={editSymbol}
+                      onChange={(e) => setEditSymbol(e.target.value.toUpperCase())}
+                      placeholder="e.g. IDEA"
+                      className="font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="edit-exchange" className="text-xs text-muted-foreground">
+                      Exchange
+                    </Label>
+                    <Input
+                      id="edit-exchange"
+                      value={editExchange}
+                      onChange={(e) => setEditExchange(e.target.value.toUpperCase())}
+                      placeholder="e.g. NSE"
+                      className="font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="edit-timeframe" className="text-xs text-muted-foreground">
+                      Timeframe
+                    </Label>
+                    <Input
+                      id="edit-timeframe"
+                      value={editTimeframe}
+                      onChange={(e) => setEditTimeframe(e.target.value)}
+                      placeholder="e.g. 5m"
+                      className="font-mono"
+                    />
+                  </div>
+                  <Button size="sm" className="w-full" onClick={confirmDetails}>
+                    Confirm details
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    OCR read {result.raw_text_count} text elements from this chart.
+                  </p>
+                </div>
               ) : result ? (
                 <div className="mt-3 space-y-2 text-sm">
                   <div className="flex justify-between border-b border-border/60 pb-2">
                     <span className="text-muted-foreground">Symbol</span>
-                    <span className="font-mono text-foreground">
-                      {result.symbol ?? "Not detected"}
-                    </span>
+                    <span className="font-mono text-foreground">{editSymbol}</span>
                   </div>
                   <div className="flex justify-between border-b border-border/60 pb-2">
                     <span className="text-muted-foreground">Exchange</span>
-                    <span className="font-mono text-foreground">
-                      {result.exchange ?? "—"}
-                    </span>
+                    <span className="font-mono text-foreground">{editExchange || "—"}</span>
                   </div>
                   <div className="flex justify-between border-b border-border/60 pb-2">
                     <span className="text-muted-foreground">Timeframe</span>
-                    <span className="font-mono text-foreground">
-                      {result.timeframe ?? "Not detected"}
-                    </span>
+                    <span className="font-mono text-foreground">{editTimeframe || "—"}</span>
                   </div>
                   <p className="pt-1 text-xs text-muted-foreground">
                     OCR read {result.raw_text_count} text elements from this chart.
-                    {!result.symbol && " You may need to confirm the symbol manually."}
                   </p>
                 </div>
               ) : (
