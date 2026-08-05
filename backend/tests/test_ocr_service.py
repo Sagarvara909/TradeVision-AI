@@ -11,9 +11,7 @@ from app.services.ocr_service import parse_chart_metadata
 
 # --- Real OCR output from an Angel One / TradeOne screenshot showing IDEA on NSE ---
 IDEA_FULL_CROP_TEXT = [
-    "Angel One - Tradeone: IDEA.", ". angelone.in/t", "Gmai", " Torrent Web",
-    "Grand Theft Auto V:.", "c EZC|ou", "Checkout - Dataent.", " wWE 2K23 - v1.02.",
-    " All Bookma", "NIFTY", "0", " Q Search for Anything [Ctrl + S]", "0",
+    "Angel One - Tradeone: IDEA.", ". angelone.in/t", "NIFTY", "0", "0",
     " Markets", "TradeOne", " Portfolio", "Orders", "Positions", "Tools ", "4",
     "24,317.15  +66.95 (+0.28%)", "77,928.15  +273.55 (+0.35%)", "Watchlist", "3",
     "x", " Chart", "Overview", " Option Chain", " SCALPER MODE ", "mywatchlist",
@@ -31,7 +29,7 @@ IDEA_FULL_CROP_TEXT = [
     "0", ".88", "375.95 V", "TATAPOWER NSE", "12.86", "-1.30 (-0.34%)", "12.84",
     "119.88 V", "IREDA NSE", "0.94 (-0.78%)", "12.82", "12:00", "14:00", "29",
     "10:30", "14:00", "30", "10:30", "12:00", "14:00", "1D 5D 1M 3M 6M 1Y 5Y",
-    "22:11:46 (UTC+5:30) |% log auto", " OPTIONS QUICK LIST",
+    "22:11:46 (UTC+5:30) |% log auto",
 ]
 
 

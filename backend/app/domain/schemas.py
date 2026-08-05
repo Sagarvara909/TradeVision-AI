@@ -54,3 +54,19 @@ class TimeSeriesResponse(BaseModel):
     symbol: str
     interval: str
     candles: list[CandleData]
+
+class TechnicalAnalysisResponse(BaseModel):
+    symbol: str
+    ema20: float
+    ema50: float | None
+    rsi: float
+    macd: float
+    macd_signal: float
+    macd_histogram: float
+    trend: str
+    support: float | None
+    resistance: float | None
+    latest_volume: int
+    average_volume: int | None
+    volume_ratio: float | None
+    above_average_volume: bool | None
