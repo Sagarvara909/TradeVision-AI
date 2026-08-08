@@ -70,3 +70,20 @@ class TechnicalAnalysisResponse(BaseModel):
     average_volume: int | None
     volume_ratio: float | None
     above_average_volume: bool | None
+
+class SentimentResponse(BaseModel):
+    label: str
+    score: float
+    article_count: int
+    headlines: list[dict]
+
+
+class RiskAnalysisResponse(BaseModel):
+    symbol: str
+    trend: str
+    rsi: float
+    volatility_pct: float
+    sentiment: SentimentResponse
+    confidence_score: int
+    risk_level: str
+    reasoning: list[str]

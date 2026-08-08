@@ -25,3 +25,26 @@ export async function loginUser(email: string, password: string) {
   }
   return res.json();
 }
+
+export type TechnicalAnalysis = {
+  symbol: string;
+  ema20: number;
+  ema50: number | null;
+  rsi: number;
+  macd: number;
+  macd_signal: number;
+  macd_histogram: number;
+  trend: string;
+  support: number | null;
+  resistance: number | null;
+  latest_volume: number;
+  average_volume: number | null;
+  volume_ratio: number | null;
+  above_average_volume: boolean | null;
+};
+
+// add alongside your existing `ocr` object in `api`:
+market: {
+  analyze: (symbol: string) =>
+    request<TechnicalAnalysis>(`/market/analysis/${symbol}`, { auth: true }),
+},

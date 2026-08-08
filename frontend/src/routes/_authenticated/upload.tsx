@@ -1,13 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState, type DragEvent } from "react";
-import { UploadCloud, ImageIcon, X, Loader2, Sparkles, Pencil } from "lucide-react";
+import { UploadCloud, ImageIcon, X, Loader2, Sparkles, Pencil, TrendingUp, TrendingDown, Minus } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
-import { api, ApiError, type OCRResult } from "@/lib/api";
+import { api, ApiError, type OCRResult, type TechnicalAnalysis } from "@/lib/api";
 
 export const Route = createFileRoute("/_authenticated/upload")({
   head: () => ({
@@ -26,12 +26,15 @@ function UploadPage() {
   const [processing, setProcessing] = useState(false);
   const [result, setResult] = useState<OCRResult | null>(null);
 
-  // Editable copies — start out matching OCR result, but the user can
-  // correct them when confidence is low (symbol/timeframe missing).
   const [editSymbol, setEditSymbol] = useState("");
   const [editExchange, setEditExchange] = useState("");
   const [editTimeframe, setEditTimeframe] = useState("");
   const [editing, setEditing] = useState(false);
+
+  // Technical analysis, fetched after the user confirms the symbol.
+  const [analysis, setAnalysis] = useState<TechnicalAnalysis | null>(null);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -60,6 +63,8 @@ function UploadPage() {
     }
     setResult(null);
     setEditing(false);
+    setAnalysis(null);
+    setAnalysisError(null);
     setFile(f);
   };
 
@@ -69,10 +74,12 @@ function UploadPage() {
     handleFiles(e.dataTransfer.files);
   };
 
-  const analyze = async () => {
+  const analyzeChart = async () => {
     if (!file) return;
     setProcessing(true);
     setResult(null);
+    setAnalysis(null);
+    setAnalysisError(null);
     try {
       const data = await api.ocr.upload(file);
       setResult(data);
@@ -89,12 +96,29 @@ function UploadPage() {
         toast.success("Chart read successfully", {
           description: `${data.symbol}${data.exchange ? ` · ${data.exchange}` : ""}${data.timeframe ? ` · ${data.timeframe}` : ""}`,
         });
+        // Symbol was detected confidently — fetch analysis right away.
+        fetchAnalysis(data.symbol);
       }
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "Something went wrong";
       toast.error("Upload failed", { description: message });
     } finally {
       setProcessing(false);
+    }
+  };
+
+  const fetchAnalysis = async (symbol: string) => {
+    setAnalysisLoading(true);
+    setAnalysisError(null);
+    try {
+      const data = await api.market.analyze(symbol);
+      setAnalysis(data);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Could not fetch market data";
+      setAnalysisError(message);
+      toast.error("Analysis failed", { description: message });
+    } finally {
+      setAnalysisLoading(false);
     }
   };
 
@@ -109,8 +133,13 @@ function UploadPage() {
     toast.success("Details confirmed", {
       description: `${editSymbol.toUpperCase()}${editExchange ? ` · ${editExchange.toUpperCase()}` : ""}${editTimeframe ? ` · ${editTimeframe}` : ""}`,
     });
-    // Next module (market data / technical analysis) will consume
-    // editSymbol / editExchange / editTimeframe from here.
+    fetchAnalysis(editSymbol.trim().toUpperCase());
+  };
+
+  const trendIcon = (trend: string) => {
+    if (trend === "uptrend") return <TrendingUp className="h-3.5 w-3.5 text-emerald-500" />;
+    if (trend === "downtrend") return <TrendingDown className="h-3.5 w-3.5 text-red-500" />;
+    return <Minus className="h-3.5 w-3.5 text-muted-foreground" />;
   };
 
   return (
@@ -151,6 +180,8 @@ function UploadPage() {
                     setFile(null);
                     setResult(null);
                     setEditing(false);
+                    setAnalysis(null);
+                    setAnalysisError(null);
                     if (inputRef.current) inputRef.current.value = "";
                   }}
                   className="absolute right-2 top-2 rounded-md border border-border bg-background/80 p-1.5 text-muted-foreground backdrop-blur hover:text-foreground"
@@ -193,7 +224,7 @@ function UploadPage() {
                   </p>
                 </div>
               </div>
-              <Button onClick={analyze} disabled={processing}>
+              <Button onClick={analyzeChart} disabled={processing}>
                 {processing ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -206,6 +237,56 @@ function UploadPage() {
                   </>
                 )}
               </Button>
+            </div>
+          ) : null}
+
+          {analysisLoading ? (
+            <div className="mt-4 glass-panel rounded-xl p-5">
+              <p className="font-mono text-[11px] uppercase tracking-widest text-primary">
+                Technical analysis
+              </p>
+              <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <Skeleton key={i} className="h-16 w-full" />
+                ))}
+              </div>
+            </div>
+          ) : analysis ? (
+            <div className="mt-4 glass-panel rounded-xl p-5">
+              <div className="flex items-center justify-between">
+                <p className="font-mono text-[11px] uppercase tracking-widest text-primary">
+                  Technical analysis · {analysis.symbol}
+                </p>
+                <div className="flex items-center gap-1.5 text-xs capitalize text-muted-foreground">
+                  {trendIcon(analysis.trend)}
+                  {analysis.trend}
+                </div>
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <MetricTile label="RSI (14)" value={analysis.rsi.toFixed(1)} />
+                <MetricTile label="EMA 20" value={analysis.ema20.toFixed(2)} />
+                <MetricTile
+                  label="EMA 50"
+                  value={analysis.ema50 !== null ? analysis.ema50.toFixed(2) : "—"}
+                />
+                <MetricTile label="MACD" value={analysis.macd.toFixed(3)} />
+                <MetricTile
+                  label="Support"
+                  value={analysis.support !== null ? analysis.support.toFixed(2) : "—"}
+                />
+                <MetricTile
+                  label="Resistance"
+                  value={analysis.resistance !== null ? analysis.resistance.toFixed(2) : "—"}
+                />
+              </div>
+              <p className="mt-3 text-xs text-muted-foreground">
+                Volume {analysis.volume_ratio ? `${analysis.volume_ratio.toFixed(2)}×` : "—"} average
+                {analysis.above_average_volume ? " (above average)" : ""}.
+              </p>
+            </div>
+          ) : analysisError ? (
+            <div className="mt-4 rounded-xl border border-destructive/30 bg-destructive/5 p-4">
+              <p className="text-sm text-destructive">{analysisError}</p>
             </div>
           ) : null}
         </div>
@@ -330,6 +411,15 @@ function UploadPage() {
           </div>
         </aside>
       </div>
+    </div>
+  );
+}
+
+function MetricTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-border/60 bg-panel/30 p-3">
+      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p>
+      <p className="mt-1 font-mono text-sm text-foreground">{value}</p>
     </div>
   );
 }
