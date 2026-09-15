@@ -36,6 +36,11 @@ TIMEFRAME_PATTERN = re.compile(r"\b(1m|3m|5m|15m|30m|1h|4h|1d|1w|1M)\b", re.IGNO
 # OCR frequently misreads the "O" in "Open" as a digit "0" — match both
 OHLC_PATTERN = re.compile(r"^[O0]\d+\.\d+\s*H\d+\.\d+\s*L\d+\.\d+", re.IGNORECASE)
 
+# Dashboard chrome terms that can be mistaken for a ticker symbol.
+# NOTE: this is applied ONLY in Tier 3 (the unanchored last-resort scan).
+# Tiers 1 and 2 are positionally anchored to the real chart label, so a
+# blacklisted word appearing there (e.g. an actual NIFTY index chart) is
+# legitimate and must NOT be filtered out.
 BLACKLIST = {
     "NIFTY", "SENSEX", "BUY", "SELL", "SAVE", "WATCHLIST", "PORTFOLIO",
     "ORDERS", "POSITIONS", "TOOLS", "MARKETS", "CHART", "OVERVIEW",
@@ -74,7 +79,7 @@ def parse_chart_metadata(texts: list[str]) -> dict:
                 for token in tokens:
                     if token in KNOWN_EXCHANGES:
                         exchange = token
-                    elif not symbol and token not in BLACKLIST and 2 <= len(token) <= 10:
+                    elif not symbol and 2 <= len(token) <= 10:
                         symbol = token
                 break
 
@@ -89,7 +94,7 @@ def parse_chart_metadata(texts: list[str]) -> dict:
                 for token in tokens:
                     if token in KNOWN_EXCHANGES:
                         exchange = token
-                    elif not symbol and token not in BLACKLIST and 2 <= len(token) <= 10:
+                    elif not symbol and 2 <= len(token) <= 10:
                         symbol = token
                 if symbol:
                     break

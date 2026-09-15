@@ -13,3 +13,11 @@ export default defineConfig({
     server: { entry: "server" },
   },
 });
+
+export default defineConfig({
+  // ...existing config
+  server: {
+    port: 8082,
+    strictPort: true,
+  },
+});

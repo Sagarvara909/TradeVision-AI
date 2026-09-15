@@ -10,55 +10,53 @@ from app.services.ocr_service import parse_chart_metadata
 
 
 # --- Real OCR output from an Angel One / TradeOne screenshot showing IDEA on NSE ---
-IDEA_FULL_CROP_TEXT = [
-    "Angel One - Tradeone: IDEA.", ". angelone.in/t", "NIFTY", "0", "0",
-    " Markets", "TradeOne", " Portfolio", "Orders", "Positions", "Tools ", "4",
-    "24,317.15  +66.95 (+0.28%)", "77,928.15  +273.55 (+0.35%)", "Watchlist", "3",
-    "x", " Chart", "Overview", " Option Chain", " SCALPER MODE ", "mywatchlist",
-    "+", "C5m", "f Indicators", "8", "0", "Save", "Instant Orders O", "Save",
-    "IDEA 5 : NSE", "013.03 H13.04 L13.02 13.03 0.00 (0.00%)", "Q Search",
-    "13.22", " Positions", "BUY @ 12.87", "SElL @ 12.87", "13.20", "0",
-    "IDEA NSE 3", "Voturme 1.056M", "13.18", "Orders", "246.95 V", "13.16",
-    "JIOFIN NSE", "2.53 (-1.01%)", "13.14", "Methet", "47.40 V", "SUZLON NSE",
-    "13.12", "-0.05 (-0.11%)", "D", "13.10", "186.92 v", "Ooption",
-    "-0.35 (-0.19%)", "13.08", "28E0", "344.85 ", "NTPC NSE ", "+1.35 (+0.39%)",
-    "13.04", "88.92 V", "IRFC NSE", "13.02", "-0.21 (-0.24%)", "Q", "13.00",
-    "22.54 V", "YESBANK NSE", "-0.30 (-1.31%)", "12.98", "334.20 ", "12.96",
-    "TMPV NSE 4", "+4.40 (+1.33%)", "12.94", "6", "78.07 ", " NHPC NSE", "o",
-    "12.92", "+0.17 (+0.22%)", "12.90", "241.59 ", "ONGC NSE ", "+3.28 (+1.38%)",
-    "0", ".88", "375.95 V", "TATAPOWER NSE", "12.86", "-1.30 (-0.34%)", "12.84",
-    "119.88 V", "IREDA NSE", "0.94 (-0.78%)", "12.82", "12:00", "14:00", "29",
-    "10:30", "14:00", "30", "10:30", "12:00", "14:00", "1D 5D 1M 3M 6M 1Y 5Y",
-    "22:11:46 (UTC+5:30) |% log auto",
+# --- Real OCR output from a NIFTY index chart (Angel One / TradeOne, 5m).
+# This case specifically guards against over-applying the BLACKLIST: NIFTY is
+# blacklisted for Tier 3 (because it appears as dashboard chrome on other
+# charts), but here it is genuinely the chart's own symbol, found via the
+# Tier 1 OHLC anchor. The blacklist must NOT filter it out at that tier. ---
+NIFTY_INDEX_CHART_TEXT = [
+    "Chart", "Overview", "Option Chain", "Stock Composition", "SCALPER MODE",
+    "5m", "f Indicators", "88", " Instant Orders", "Save", "?", "Save", "+",
+    " NIFTY: 5 : NSE",
+    "O23433.00 H23439.60 L23422.00 C234$9.40 +6.85 (+0.03%)",
+    "23600.00", "Volume97", "23580.00", "23560.00", "23540.00", "23520.00",
+    "23500.00", "D", "23480.00", "T", "23460.00", "23440.00", "23420.00",
+    "23398.10", "23380.00", "n", "23360.00", "23340.00", "6", "23320.00",
+    "23290.84", "23280.00", "g", "23260.00", "NIFTY",
+    "23,398.10 -79.70 (-0.34%)", "CAL", "ATM", "Lots", "23398.10",
+    "BUY @ 23398.10", "SET SL/TGT", "23220.00", "23200.00", "2:00", "14:00",
+    "10", "10:30", "10 Sep '26 11:55", "14:00", "11", "10:30", "14:00", "15",
+    "1D 5D 1M 3M 6M 1Y 5Y", "11:48:16 (UTC+5:30)", "% log auto", "ENG",
+    "File Explo", " Angel One - Tradeone -", "C Upload chart", "TradeVi",
+    "vite.config.ts - Project S", "Containers - Docker De", "Windows PowerShell",
+    "Screenshot 2026-08-27", "US",
 ]
 
 
-def test_idea_full_crop_extracts_correctly():
-    """Real regression test: full crop including OHLC line, symbol label with colon."""
-    result = parse_chart_metadata(IDEA_FULL_CROP_TEXT)
-    assert result["symbol"] == "IDEA"
+def test_nifty_index_chart_not_blocked_by_blacklist():
+    """
+    Regression test: when NIFTY is the actual chart symbol (found via the
+    Tier 1 OHLC anchor), it must be returned — the Tier 3 blacklist must not
+    suppress it. Previously this returned 'CAL' (a truncated 'CALL' button).
+    """
+    result = parse_chart_metadata(NIFTY_INDEX_CHART_TEXT)
+    assert result["symbol"] == "NIFTY"
     assert result["exchange"] == "NSE"
     assert result["timeframe"] == "5m"
 
 
-# --- Representative reconstruction of a cropped screenshot missing the OHLC
-# anchor, where NIFTY (dashboard chrome) could be mistaken for the symbol.
-# NOTE: replace with real captured OCR text for a strict regression test. ---
-CROPPED_NO_OHLC_TEXT = [
-    "NIFTY", "24,317.15  +66.95 (+0.28%)", "SENSEX", "77,928.15  +273.55 (+0.35%)",
-    "Watchlist", "mywatchlist", "C5m", "Indicators", "Save",
-    "IDEA NSE 3", "Voturme 1.056M", "JIOFIN NSE", "246.95 V",
-]
-
-
-def test_cropped_screenshot_ignores_dashboard_chrome():
+def test_blacklist_still_applies_to_unanchored_fallback():
     """
-    Without an OHLC anchor, the parser must not fall back to picking up
-    dashboard chrome (NIFTY/SENSEX) as the symbol — it should skip
-    blacklisted terms and prefer a real ticker even via the weaker
-    fallback tiers.
+    The complementary case: with no OHLC anchor and no exchange keyword
+    present, NIFTY appearing as dashboard chrome must still be skipped by
+    the Tier 3 blacklist.
     """
-    result = parse_chart_metadata(CROPPED_NO_OHLC_TEXT)
+    chrome_only_text = [
+        "NIFTY", "24,317.15 +66.95 (+0.28%)", "SENSEX", "Watchlist", "Save",
+        "TATAPOWER", "375.95",
+    ]
+    result = parse_chart_metadata(chrome_only_text)
     assert result["symbol"] != "NIFTY"
     assert result["symbol"] != "SENSEX"
 

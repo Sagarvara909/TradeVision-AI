@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     twelve_data_api_key: str
     finnhub_api_key: str
+    gemini_api_key: str
 
     class Config:
         env_file = ".env"
