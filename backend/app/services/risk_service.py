@@ -5,7 +5,24 @@ Combines technical analysis output and news sentiment into a single
 confidence score (0-100) with an accompanying risk level. This is the
 project's core explainable-AI contribution — every input to the score
 is traceable back to a concrete number, not a black-box model.
+
+`analyze_symbol` is the single shared pipeline: market data -> technical
+analysis -> sentiment -> confidence score. Both the /market/risk endpoint
+and the report generator call this, so there is exactly one implementation
+of the scoring logic instead of two copies that could drift apart.
 """
+
+from app.services.market_service import get_time_series
+from app.services.technical_analysis_service import run_full_analysis
+from app.services.news_service import analyze_sentiment
+
+
+class InsufficientDataError(Exception):
+    """Raised when there isn't enough market data to analyze a symbol.
+
+    Callers should turn this into an HTTP 404/422 with str(exc) as the detail,
+    instead of letting a ZeroDivisionError or IndexError reach the client.
+    """
 
 
 def calculate_volatility_risk(candles_high_low_ranges: list[float], avg_price: float) -> float:
@@ -129,4 +146,89 @@ def calculate_confidence_score(
         "confidence_score": final_score,
         "risk_level": risk_level,
         "reasoning": reasons,
+    }
+
+
+def analyze_symbol(symbol: str, interval: str = "1day", output_size: int = 60) -> dict:
+    """
+    Runs the full pipeline for one symbol: fetch candles -> technical
+    analysis -> volatility/risk -> sentiment -> confidence score.
+
+    Returns a flat dict matching RiskAnalysisResponse's fields (with
+    "sentiment" as a nested dict), so callers can do:
+        result = analyze_symbol("AAPL")
+        sentiment_dict = result.pop("sentiment")
+        RiskAnalysisResponse(**result, sentiment=SentimentResponse(**sentiment_dict))
+
+    It is also exactly the dict shape llm_service.generate_report() expects,
+    so a report can be generated directly from this output.
+
+    Raises:
+        InsufficientDataError: if the symbol has no or too little candle data
+        (e.g. a bad OCR read, a delisted ticker, or an unsupported symbol).
+        Callers should turn this into a 404, not let it crash as a 500.
+    """
+    series = get_time_series(symbol, interval=interval, output_size=output_size)
+    values = series.get("values", [])
+    if not values:
+        raise InsufficientDataError(f"No market data found for symbol '{symbol}'.")
+
+    candles = [
+        {
+            "datetime": c["datetime"], "open": c["open"], "high": c["high"],
+            "low": c["low"], "close": c["close"], "volume": c["volume"],
+        }
+        for c in reversed(values)
+    ]
+    if len(candles) < 2:
+        raise InsufficientDataError(
+            f"Not enough historical data for '{symbol}' to run analysis."
+        )
+
+    ta = run_full_analysis(candles)
+
+    ranges = [float(c["high"]) - float(c["low"]) for c in candles]
+    avg_price = sum(float(c["close"]) for c in candles) / len(candles)
+    volatility = calculate_volatility_risk(ranges, avg_price)
+    risk_level = calculate_risk_level(volatility, ta["rsi"])
+
+    sentiment = analyze_sentiment(symbol)
+
+    confidence = calculate_confidence_score(
+        trend=ta["trend"],
+        rsi=ta["rsi"],
+        macd_histogram=ta["macd_histogram"],
+        volume_ratio=ta["volume_analysis"]["volume_ratio"],
+        sentiment_score=sentiment["sentiment_score"],
+        risk_level=risk_level,
+    )
+
+    vol = ta["volume_analysis"]
+    sr = ta["support_resistance"]
+
+    return {
+        "symbol": symbol,
+        "trend": ta["trend"],
+        "rsi": ta["rsi"],
+        "ema20": ta["ema20"],
+        "ema50": ta["ema50"],
+        "macd": ta["macd"],
+        "macd_signal": ta["macd_signal"],
+        "macd_histogram": ta["macd_histogram"],
+        "support": sr["support"],
+        "resistance": sr["resistance"],
+        "latest_volume": vol["latest_volume"],
+        "average_volume": vol["average_volume"],
+        "volume_ratio": vol["volume_ratio"],
+        "above_average_volume": vol["above_average"],
+        "volatility_pct": volatility,
+        "sentiment": {
+            "label": sentiment["label"],
+            "score": sentiment["sentiment_score"],
+            "article_count": sentiment["article_count"],
+            "headlines": sentiment["headlines"],
+        },
+        "confidence_score": confidence["confidence_score"],
+        "risk_level": confidence["risk_level"],
+        "reasoning": confidence["reasoning"],
     }

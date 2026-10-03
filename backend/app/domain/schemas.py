@@ -1,16 +1,15 @@
 from pydantic import BaseModel, EmailStr
 
+
 class UserCreate(BaseModel):
     email: EmailStr
     password: str
+
 
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
 
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str= "bearer"
 
 class UserResponse(BaseModel):
     id: str
@@ -19,10 +18,12 @@ class UserResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+
 
 class OCRResult(BaseModel):
     image_id: str
@@ -30,6 +31,7 @@ class OCRResult(BaseModel):
     exchange: str | None
     timeframe: str | None
     raw_text_count: int
+
 
 class QuoteResponse(BaseModel):
     symbol: str
@@ -55,6 +57,7 @@ class TimeSeriesResponse(BaseModel):
     interval: str
     candles: list[CandleData]
 
+
 class TechnicalAnalysisResponse(BaseModel):
     symbol: str
     ema20: float
@@ -71,6 +74,7 @@ class TechnicalAnalysisResponse(BaseModel):
     volume_ratio: float | None
     above_average_volume: bool | None
 
+
 class SentimentResponse(BaseModel):
     label: str
     score: float
@@ -78,12 +82,34 @@ class SentimentResponse(BaseModel):
     headlines: list[dict]
 
 
-class RiskAnalysisResponse(BaseModel):
-    symbol: str
-    trend: str
-    rsi: float
+# Inherits every technical field (ema20, ema50, macd, support, volume, etc.)
+# from TechnicalAnalysisResponse, then adds the risk/confidence layer on top.
+# This is what fixes the LLM report showing "unavailable" for indicators that
+# were already being calculated but never reached this response before.
+class RiskAnalysisResponse(TechnicalAnalysisResponse):
     volatility_pct: float
     sentiment: SentimentResponse
     confidence_score: int
     risk_level: str
     reasoning: list[str]
+
+
+class ReportRequest(BaseModel):
+    image_id: str
+    symbol: str
+    timeframe: str = "1day"
+
+
+class ReportResponse(BaseModel):
+    id: str
+    image_id: str
+    symbol: str
+    timeframe: str
+    confidence_score: int
+    risk_level: str
+    reasoning: list[str]
+    indicators: dict
+    llm_report: str
+    llm_model: str | None = None
+    unsupported_numbers: list[str] = []
+    created_at: str

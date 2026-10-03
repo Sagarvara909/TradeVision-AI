@@ -1,4 +1,8 @@
 first run docker in system 
+cd /run/media/sagar/4b11a45d-e86c-4f78-93ef-475814043003/CSPIT/Project/TradeVision-AI/backend
+source .venv/bin/activate
+python --version
+
 docker compose up -d 
 docker ps -a
 

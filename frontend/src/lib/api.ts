@@ -109,6 +109,56 @@ export type OCRResult = {
   raw_text_count: number;
 };
 
+// Technical indicators only — matches backend TechnicalAnalysisResponse.
+export type TechnicalAnalysis = {
+  symbol: string;
+  ema20: number;
+  ema50: number | null;
+  rsi: number;
+  macd: number;
+  macd_signal: number;
+  macd_histogram: number;
+  trend: string;
+  support: number | null;
+  resistance: number | null;
+  latest_volume: number;
+  average_volume: number | null;
+  volume_ratio: number | null;
+  above_average_volume: boolean | null;
+};
+
+export type SentimentInfo = {
+  label: string;
+  score: number;
+  article_count: number;
+  headlines: Record<string, unknown>[];
+};
+
+// Everything TechnicalAnalysis has, PLUS the confidence/risk layer.
+// Matches backend RiskAnalysisResponse (which now extends TechnicalAnalysisResponse).
+export type RiskAnalysis = TechnicalAnalysis & {
+  volatility_pct: number;
+  sentiment: SentimentInfo;
+  confidence_score: number;
+  risk_level: string;
+  reasoning: string[];
+};
+
+export type Report = {
+  id: string;
+  image_id: string;
+  symbol: string;
+  timeframe: string;
+  confidence_score: number;
+  risk_level: string;
+  reasoning: string[];
+  indicators: Record<string, unknown>;
+  llm_report: string;
+  llm_model: string | null;
+  unsupported_numbers: string[];
+  created_at: string;
+};
+
 // ---- Endpoints ----
 export const api = {
   auth: {
@@ -134,5 +184,29 @@ export const api = {
         auth: true,
       });
     },
+  },
+  market: {
+    analyze: (symbol: string) =>
+      request<TechnicalAnalysis>(`/market/analysis/${encodeURIComponent(symbol)}`, {
+        auth: true,
+      }),
+    // Superset of analyze(): same technical fields PLUS confidence_score,
+    // risk_level, reasoning and sentiment. Prefer this one in the UI.
+    risk: (symbol: string) =>
+      request<RiskAnalysis>(`/market/risk/${encodeURIComponent(symbol)}`, {
+        auth: true,
+      }),
+  },
+  reports: {
+    // image_id must belong to the logged-in user's own uploaded chart
+    // (Report.image_id is a required foreign key on the backend).
+    create: (image_id: string, symbol: string, timeframe = "1day") =>
+      request<Report>("/reports", {
+        method: "POST",
+        auth: true,
+        body: { image_id, symbol, timeframe },
+      }),
+    get: (reportId: string) =>
+      request<Report>(`/reports/${encodeURIComponent(reportId)}`, { auth: true }),
   },
 };

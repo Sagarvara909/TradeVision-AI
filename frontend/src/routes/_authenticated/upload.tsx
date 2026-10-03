@@ -1,13 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState, type DragEvent } from "react";
-import { UploadCloud, ImageIcon, X, Loader2, Sparkles, Pencil, TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { UploadCloud, ImageIcon, X, Loader2, Sparkles, Pencil, TrendingUp, TrendingDown, Minus, FileText, AlertTriangle } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
-import { api, ApiError, type OCRResult, type TechnicalAnalysis } from "@/lib/api";
+import { api, ApiError, type OCRResult, type RiskAnalysis, type Report } from "@/lib/api";
 
 export const Route = createFileRoute("/_authenticated/upload")({
   head: () => ({
@@ -18,6 +18,13 @@ export const Route = createFileRoute("/_authenticated/upload")({
 
 const MAX_SIZE = 8 * 1024 * 1024;
 const ACCEPTED = ["image/png", "image/jpeg", "image/webp"];
+
+// The backend's technical/risk pipeline currently always runs on daily
+// candles regardless of what the chart screenshot's own timeframe says
+// (OCR-read labels like "5m" don't map directly to Twelve Data's interval
+// strings). This is a known simplification, not a bug — mapping chart
+// timeframe -> API interval is future work.
+const ANALYSIS_TIMEFRAME = "1day";
 
 function UploadPage() {
   const [file, setFile] = useState<File | null>(null);
@@ -31,10 +38,15 @@ function UploadPage() {
   const [editTimeframe, setEditTimeframe] = useState("");
   const [editing, setEditing] = useState(false);
 
-  // Technical analysis, fetched after the user confirms the symbol.
-  const [analysis, setAnalysis] = useState<TechnicalAnalysis | null>(null);
+  // Technical + confidence/risk analysis, fetched after the user confirms the symbol.
+  const [analysis, setAnalysis] = useState<RiskAnalysis | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+
+  // AI explainable report, generated on demand from the analysis above.
+  const [report, setReport] = useState<Report | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -65,6 +77,8 @@ function UploadPage() {
     setEditing(false);
     setAnalysis(null);
     setAnalysisError(null);
+    setReport(null);
+    setReportError(null);
     setFile(f);
   };
 
@@ -80,6 +94,8 @@ function UploadPage() {
     setResult(null);
     setAnalysis(null);
     setAnalysisError(null);
+    setReport(null);
+    setReportError(null);
     try {
       const data = await api.ocr.upload(file);
       setResult(data);
@@ -110,15 +126,44 @@ function UploadPage() {
   const fetchAnalysis = async (symbol: string) => {
     setAnalysisLoading(true);
     setAnalysisError(null);
+    setReport(null);
+    setReportError(null);
     try {
-      const data = await api.market.analyze(symbol);
+      const data = await api.market.risk(symbol);
       setAnalysis(data);
     } catch (err) {
+      // err.message is now the backend's specific detail (e.g. "No market
+      // data found for symbol 'XXXX'") rather than a generic fallback,
+      // since /market/risk returns a real 404 with that message instead of
+      // crashing — closes the "Known UX gap" from the project doc.
       const message = err instanceof ApiError ? err.message : "Could not fetch market data";
       setAnalysisError(message);
       toast.error("Analysis failed", { description: message });
     } finally {
       setAnalysisLoading(false);
+    }
+  };
+
+  const generateReport = async () => {
+    if (!result?.image_id || !analysis?.symbol) return;
+    setReportLoading(true);
+    setReportError(null);
+    try {
+      const data = await api.reports.create(result.image_id, analysis.symbol, ANALYSIS_TIMEFRAME);
+      setReport(data);
+      if (data.unsupported_numbers.length > 0) {
+        toast.warning("Report generated with a caveat", {
+          description: "Some figures in the report could not be traced back to the input data.",
+        });
+      } else {
+        toast.success("Report generated");
+      }
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Could not generate the report";
+      setReportError(message);
+      toast.error("Report generation failed", { description: message });
+    } finally {
+      setReportLoading(false);
     }
   };
 
@@ -140,6 +185,12 @@ function UploadPage() {
     if (trend === "uptrend") return <TrendingUp className="h-3.5 w-3.5 text-emerald-500" />;
     if (trend === "downtrend") return <TrendingDown className="h-3.5 w-3.5 text-red-500" />;
     return <Minus className="h-3.5 w-3.5 text-muted-foreground" />;
+  };
+
+  const riskColor = (level: string) => {
+    if (level === "low") return "text-emerald-500 border-emerald-500/30 bg-emerald-500/5";
+    if (level === "high") return "text-red-500 border-red-500/30 bg-red-500/5";
+    return "text-amber-500 border-amber-500/30 bg-amber-500/5";
   };
 
   return (
@@ -182,6 +233,8 @@ function UploadPage() {
                     setEditing(false);
                     setAnalysis(null);
                     setAnalysisError(null);
+                    setReport(null);
+                    setReportError(null);
                     if (inputRef.current) inputRef.current.value = "";
                   }}
                   className="absolute right-2 top-2 rounded-md border border-border bg-background/80 p-1.5 text-muted-foreground backdrop-blur hover:text-foreground"
@@ -252,38 +305,138 @@ function UploadPage() {
               </div>
             </div>
           ) : analysis ? (
-            <div className="mt-4 glass-panel rounded-xl p-5">
-              <div className="flex items-center justify-between">
-                <p className="font-mono text-[11px] uppercase tracking-widest text-primary">
-                  Technical analysis · {analysis.symbol}
-                </p>
-                <div className="flex items-center gap-1.5 text-xs capitalize text-muted-foreground">
-                  {trendIcon(analysis.trend)}
-                  {analysis.trend}
+            <>
+              <div className="mt-4 glass-panel rounded-xl p-5">
+                <div className="flex items-center justify-between">
+                  <p className="font-mono text-[11px] uppercase tracking-widest text-primary">
+                    Technical analysis · {analysis.symbol}
+                  </p>
+                  <div className="flex items-center gap-1.5 text-xs capitalize text-muted-foreground">
+                    {trendIcon(analysis.trend)}
+                    {analysis.trend}
+                  </div>
                 </div>
+                <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                  <MetricTile label="RSI (14)" value={analysis.rsi.toFixed(1)} />
+                  <MetricTile label="EMA 20" value={analysis.ema20.toFixed(2)} />
+                  <MetricTile
+                    label="EMA 50"
+                    value={analysis.ema50 !== null ? analysis.ema50.toFixed(2) : "—"}
+                  />
+                  <MetricTile label="MACD" value={analysis.macd.toFixed(3)} />
+                  <MetricTile
+                    label="Support"
+                    value={analysis.support !== null ? analysis.support.toFixed(2) : "—"}
+                  />
+                  <MetricTile
+                    label="Resistance"
+                    value={analysis.resistance !== null ? analysis.resistance.toFixed(2) : "—"}
+                  />
+                </div>
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Volume {analysis.volume_ratio ? `${analysis.volume_ratio.toFixed(2)}×` : "—"} average
+                  {analysis.above_average_volume ? " (above average)" : ""}.
+                </p>
               </div>
-              <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
-                <MetricTile label="RSI (14)" value={analysis.rsi.toFixed(1)} />
-                <MetricTile label="EMA 20" value={analysis.ema20.toFixed(2)} />
-                <MetricTile
-                  label="EMA 50"
-                  value={analysis.ema50 !== null ? analysis.ema50.toFixed(2) : "—"}
-                />
-                <MetricTile label="MACD" value={analysis.macd.toFixed(3)} />
-                <MetricTile
-                  label="Support"
-                  value={analysis.support !== null ? analysis.support.toFixed(2) : "—"}
-                />
-                <MetricTile
-                  label="Resistance"
-                  value={analysis.resistance !== null ? analysis.resistance.toFixed(2) : "—"}
-                />
+
+              {/* Confidence score + reasoning trail — the project's core
+                  explainability feature. Every point here traces back to
+                  the technical/sentiment numbers above. */}
+              <div className="mt-4 glass-panel rounded-xl p-5">
+                <div className="flex items-center justify-between">
+                  <p className="font-mono text-[11px] uppercase tracking-widest text-primary">
+                    Confidence &amp; risk
+                  </p>
+                  <span className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium capitalize ${riskColor(analysis.risk_level)}`}>
+                    {analysis.risk_level} risk
+                  </span>
+                </div>
+                <div className="mt-3 flex items-end gap-2">
+                  <span className="text-3xl font-semibold text-foreground">{analysis.confidence_score}</span>
+                  <span className="pb-1 text-sm text-muted-foreground">/ 100</span>
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  How well the signals agree with each other — not a prediction of future price.
+                </p>
+                <ul className="mt-3 space-y-1.5 border-t border-border/60 pt-3 text-xs text-muted-foreground">
+                  {analysis.reasoning.map((line, i) => (
+                    <li key={i} className="flex gap-2">
+                      <span className="text-primary">·</span>
+                      <span>{line}</span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-3 text-xs text-muted-foreground">
+                  News sentiment: <span className="capitalize text-foreground">{analysis.sentiment.label}</span>
+                  {" "}({analysis.sentiment.score.toFixed(2)}, {analysis.sentiment.article_count} articles)
+                </p>
               </div>
-              <p className="mt-3 text-xs text-muted-foreground">
-                Volume {analysis.volume_ratio ? `${analysis.volume_ratio.toFixed(2)}×` : "—"} average
-                {analysis.above_average_volume ? " (above average)" : ""}.
-              </p>
-            </div>
+
+              {/* AI explainable report — generated on demand, not automatically,
+                  since it costs an LLM call. */}
+              <div className="mt-4 glass-panel rounded-xl p-5">
+                <div className="flex items-center justify-between">
+                  <p className="font-mono text-[11px] uppercase tracking-widest text-primary">
+                    AI explainable report
+                  </p>
+                  {!report ? (
+                    <Button size="sm" onClick={generateReport} disabled={reportLoading}>
+                      {reportLoading ? (
+                        <>
+                          <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                          Generating…
+                        </>
+                      ) : (
+                        <>
+                          <FileText className="mr-1.5 h-3.5 w-3.5" />
+                          Generate report
+                        </>
+                      )}
+                    </Button>
+                  ) : null}
+                </div>
+
+                {reportLoading ? (
+                  <div className="mt-3 space-y-2">
+                    <Skeleton className="h-4 w-full" />
+                    <Skeleton className="h-4 w-5/6" />
+                    <Skeleton className="h-4 w-full" />
+                    <Skeleton className="h-4 w-3/4" />
+                  </div>
+                ) : report ? (
+                  <>
+                    {report.unsupported_numbers.length > 0 ? (
+                      <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-600">
+                        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        <span>
+                          Some numbers in this report didn't trace back to the verified data:{" "}
+                          {report.unsupported_numbers.join(", ")}. Treat them with caution.
+                        </span>
+                      </div>
+                    ) : null}
+                    <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+                      {report.llm_report}
+                    </p>
+                    {report.llm_model ? (
+                      <p className="mt-3 text-[11px] text-muted-foreground">
+                        Generated by {report.llm_model}
+                      </p>
+                    ) : null}
+                  </>
+                ) : reportError ? (
+                  <div className="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3">
+                    <p className="text-sm text-destructive">{reportError}</p>
+                    <Button size="sm" variant="outline" className="mt-2" onClick={generateReport}>
+                      Try again
+                    </Button>
+                  </div>
+                ) : (
+                  <p className="mt-3 text-sm text-muted-foreground">
+                    Turn the numbers above into a plain-language explanation.
+                  </p>
+                )}
+              </div>
+            </>
           ) : analysisError ? (
             <div className="mt-4 rounded-xl border border-destructive/30 bg-destructive/5 p-4">
               <p className="text-sm text-destructive">{analysisError}</p>
