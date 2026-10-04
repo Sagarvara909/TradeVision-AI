@@ -12,9 +12,31 @@ and the report generator call this, so there is exactly one implementation
 of the scoring logic instead of two copies that could drift apart.
 """
 
+import numpy as np
+
 from app.services.market_service import get_time_series
 from app.services.technical_analysis_service import run_full_analysis
 from app.services.news_service import analyze_sentiment
+
+
+def _to_native(value):
+    """
+    Recursively convert numpy scalar types (bool_, int64, float64, ...) to
+    native Python types. technical_analysis_service.py computes with
+    pandas/numpy, so values like `above_average_volume` come out as
+    numpy.bool_ rather than Python's bool. Python's stdlib json encoder
+    (used when SQLAlchemy writes the `indicators` JSON column) can't
+    serialize numpy types, even though Pydantic silently coerces them fine
+    in an API response — which is why this only broke the DB save, not the
+    /market/risk endpoint.
+    """
+    if isinstance(value, dict):
+        return {k: _to_native(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_to_native(v) for v in value]
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
 
 
 class InsufficientDataError(Exception):
@@ -149,14 +171,24 @@ def calculate_confidence_score(
     }
 
 
-def analyze_symbol(symbol: str, interval: str = "1day", output_size: int = 60) -> dict:
+def analyze_symbol(
+    symbol: str,
+    interval: str = "1day",
+    output_size: int = 60,
+    exchange: str | None = None,
+) -> dict:
     """
     Runs the full pipeline for one symbol: fetch candles -> technical
     analysis -> volatility/risk -> sentiment -> confidence score.
 
+    `exchange` (e.g. "NSE", "BSE", "NASDAQ") is optional but matters for
+    Indian tickers: Yahoo Finance needs a ".NS"/".BO" suffix to find them
+    (see market_service._resolve_symbol). Pass whatever OCR/the user gave,
+    even if it's None — US tickers resolve fine without it.
+
     Returns a flat dict matching RiskAnalysisResponse's fields (with
     "sentiment" as a nested dict), so callers can do:
-        result = analyze_symbol("AAPL")
+        result = analyze_symbol("RELIANCE", exchange="NSE")
         sentiment_dict = result.pop("sentiment")
         RiskAnalysisResponse(**result, sentiment=SentimentResponse(**sentiment_dict))
 
@@ -168,7 +200,7 @@ def analyze_symbol(symbol: str, interval: str = "1day", output_size: int = 60) -
         (e.g. a bad OCR read, a delisted ticker, or an unsupported symbol).
         Callers should turn this into a 404, not let it crash as a 500.
     """
-    series = get_time_series(symbol, interval=interval, output_size=output_size)
+    series = get_time_series(symbol, interval=interval, output_size=output_size, exchange=exchange)
     values = series.get("values", [])
     if not values:
         raise InsufficientDataError(f"No market data found for symbol '{symbol}'.")
@@ -206,7 +238,7 @@ def analyze_symbol(symbol: str, interval: str = "1day", output_size: int = 60) -
     vol = ta["volume_analysis"]
     sr = ta["support_resistance"]
 
-    return {
+    return _to_native({
         "symbol": symbol,
         "trend": ta["trend"],
         "rsi": ta["rsi"],
@@ -231,4 +263,4 @@ def analyze_symbol(symbol: str, interval: str = "1day", output_size: int = 60) -
         "confidence_score": confidence["confidence_score"],
         "risk_level": confidence["risk_level"],
         "reasoning": confidence["reasoning"],
-    }
+    })

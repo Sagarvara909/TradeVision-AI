@@ -25,7 +25,7 @@ import { useAuth } from "@/lib/auth-context";
 
 const nav = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
-  { title: "Upload", url: "/upload", icon: Upload },
+  { title: "Analyze chart", url: "/upload", icon: Upload },
   { title: "History", url: "/history", icon: History },
   { title: "Watchlist", url: "/watchlist", icon: Star },
 ];
@@ -43,21 +43,19 @@ export function AppSidebar() {
   const isActive = (url: string) => pathname === url;
 
   return (
-    <Sidebar collapsible="icon" className="border-r border-sidebar-border">
-      <SidebarHeader className="border-b border-sidebar-border">
-        <Link
-          to="/dashboard"
-          className="flex items-center gap-2.5 px-2 py-1.5"
-        >
-          <div className="flex h-8 w-8 items-center justify-center rounded-md border border-primary/40 bg-primary/10 text-primary">
-            <Activity className="h-4 w-4" strokeWidth={2} />
+    <Sidebar
+      collapsible="icon"
+      className="border-r border-sidebar-border shadow-[2px_0_12px_rgb(15_23_42_/_2%)]"
+    >
+      <SidebarHeader className="border-b border-sidebar-border px-3 py-4">
+        <Link to="/dashboard" className="flex items-center gap-3 px-1 py-1.5">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm shadow-primary/20">
+            <Activity className="h-[18px] w-[18px]" strokeWidth={2} />
           </div>
           <div className="flex flex-col leading-tight group-data-[collapsible=icon]:hidden">
-            <span className="text-sm font-semibold tracking-tight">
-              TradeVision
-            </span>
+            <span className="text-sm font-semibold tracking-tight">TradeVision AI</span>
             <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-              AI · v0.1
+              MARKET INTELLIGENCE
             </span>
           </div>
         </Link>
@@ -65,18 +63,14 @@ export function AppSidebar() {
 
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel className="font-mono text-[10px] uppercase tracking-widest">
-            Analysis
+          <SidebarGroupLabel className="px-3 pt-5 font-sans text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Workspace
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {nav.map((item) => (
                 <SidebarMenuItem key={item.url}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={isActive(item.url)}
-                    tooltip={item.title}
-                  >
+                  <SidebarMenuButton asChild isActive={isActive(item.url)} tooltip={item.title}>
                     <Link to={item.url} className="flex items-center gap-2">
                       <item.icon className="h-4 w-4" strokeWidth={1.75} />
                       <span>{item.title}</span>
@@ -89,18 +83,14 @@ export function AppSidebar() {
         </SidebarGroup>
 
         <SidebarGroup>
-          <SidebarGroupLabel className="font-mono text-[10px] uppercase tracking-widest">
+          <SidebarGroupLabel className="px-3 pt-5 font-sans text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
             Account
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {account.map((item) => (
                 <SidebarMenuItem key={item.url}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={isActive(item.url)}
-                    tooltip={item.title}
-                  >
+                  <SidebarMenuButton asChild isActive={isActive(item.url)} tooltip={item.title}>
                     <Link to={item.url} className="flex items-center gap-2">
                       <item.icon className="h-4 w-4" strokeWidth={1.75} />
                       <span>{item.title}</span>
@@ -113,7 +103,7 @@ export function AppSidebar() {
         </SidebarGroup>
       </SidebarContent>
 
-      <SidebarFooter className="border-t border-sidebar-border">
+      <SidebarFooter className="border-t border-sidebar-border p-3">
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton

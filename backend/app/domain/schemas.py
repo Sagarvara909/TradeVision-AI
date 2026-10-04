@@ -98,6 +98,7 @@ class ReportRequest(BaseModel):
     image_id: str
     symbol: str
     timeframe: str = "1day"
+    exchange: str | None = None  # e.g. "NSE", "BSE", "NASDAQ" — needed to resolve Indian tickers
 
 
 class ReportResponse(BaseModel):
@@ -113,3 +114,21 @@ class ReportResponse(BaseModel):
     llm_model: str | None = None
     unsupported_numbers: list[str] = []
     created_at: str
+
+
+class ChatMessageRequest(BaseModel):
+    message: str
+
+
+class ChatMessageResponse(BaseModel):
+    id: str
+    role: str  # "user" or "assistant"
+    content: str
+    created_at: str
+    llm_model: str | None = None  # set only on "assistant" messages
+    unsupported_numbers: list[str] = []  # set only on "assistant" messages
+
+
+class ChatHistoryResponse(BaseModel):
+    report_id: str
+    messages: list[ChatMessageResponse]

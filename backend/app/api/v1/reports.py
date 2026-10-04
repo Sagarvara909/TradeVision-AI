@@ -29,7 +29,9 @@ def create_report(
         raise HTTPException(status_code=404, detail="Uploaded image not found.")
 
     try:
-        analysis = analyze_symbol(payload.symbol, interval=payload.timeframe)
+        analysis = analyze_symbol(
+            payload.symbol, interval=payload.timeframe, exchange=payload.exchange
+        )
     except InsufficientDataError as e:
         raise HTTPException(status_code=404, detail=str(e))
 

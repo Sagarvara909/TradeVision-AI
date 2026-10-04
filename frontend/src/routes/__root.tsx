@@ -18,9 +18,7 @@ function NotFoundComponent() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="max-w-md text-center">
-        <p className="font-mono text-xs uppercase tracking-[0.3em] text-primary">
-          Error · 404
-        </p>
+        <p className="font-mono text-xs uppercase tracking-[0.3em] text-primary">Error · 404</p>
         <h1 className="mt-4 text-3xl font-semibold tracking-tight text-foreground">
           Signal not found
         </h1>
@@ -104,7 +102,11 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     ],
     links: [
       { rel: "stylesheet", href: appCss },
-      { rel: "icon", href: "D:\\CSPIT\\5th semester\\Project SGP\\frontend\\public\\favicon.ico", type: "icon" },
+      {
+        rel: "icon",
+        href: "D:\\CSPIT\\5th semester\\Project SGP\\frontend\\public\\favicon.ico",
+        type: "icon",
+      },
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
       {
@@ -121,7 +123,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 
 function RootShell({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en">
       <head>
         <HeadContent />
       </head>

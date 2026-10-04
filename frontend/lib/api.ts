@@ -1,31 +1,115 @@
-const API_BASE_URL = "http://127.0.0.1:8000/api/v1";
+/**
+ * TradeVision AI — API client.
+ * Single typed module. Add new endpoints as methods on `api`.
+ */
 
-export async function registerUser(email: string, password: string) {
-  const res = await fetch(`${API_BASE_URL}/auth/register`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
-  });
-  if (!res.ok) {
-    const error = await res.json();
-    throw new Error(error.detail || "Registration failed");
+export const API_BASE_URL =
+  (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
+  "http://127.0.0.1:8000/api/v1";
+
+const ACCESS_KEY = "tv_access_token";
+const REFRESH_KEY = "tv_refresh_token";
+
+export const tokenStore = {
+  getAccess: () =>
+    typeof window === "undefined" ? null : localStorage.getItem(ACCESS_KEY),
+  getRefresh: () =>
+    typeof window === "undefined" ? null : localStorage.getItem(REFRESH_KEY),
+  set: (access: string, refresh: string) => {
+    localStorage.setItem(ACCESS_KEY, access);
+    localStorage.setItem(REFRESH_KEY, refresh);
+  },
+  clear: () => {
+    localStorage.removeItem(ACCESS_KEY);
+    localStorage.removeItem(REFRESH_KEY);
+  },
+};
+
+export class ApiError extends Error {
+  status: number;
+  data: unknown;
+  constructor(message: string, status: number, data: unknown) {
+    super(message);
+    this.status = status;
+    this.data = data;
   }
-  return res.json();
 }
 
-export async function loginUser(email: string, password: string) {
-  const res = await fetch(`${API_BASE_URL}/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
-  });
-  if (!res.ok) {
-    const error = await res.json();
-    throw new Error(error.detail || "Login failed");
+type RequestOptions = {
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  body?: unknown;
+  auth?: boolean;
+  headers?: Record<string, string>;
+  signal?: AbortSignal;
+};
+
+async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
+  const { method = "GET", body, auth = false, headers = {}, signal } = opts;
+  const url = `${API_BASE_URL}${path}`;
+
+  const finalHeaders: Record<string, string> = {
+    Accept: "application/json",
+    ...headers,
+  };
+  if (body !== undefined && !(body instanceof FormData)) {
+    finalHeaders["Content-Type"] = "application/json";
   }
-  return res.json();
+  if (auth) {
+    const token = tokenStore.getAccess();
+    if (token) finalHeaders.Authorization = `Bearer ${token}`;
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method,
+      headers: finalHeaders,
+      body:
+        body === undefined
+          ? undefined
+          : body instanceof FormData
+            ? body
+            : JSON.stringify(body),
+      signal,
+    });
+  } catch (err) {
+    throw new ApiError(
+      err instanceof Error ? err.message : "Network error",
+      0,
+      null,
+    );
+  }
+
+  const isJson = res.headers.get("content-type")?.includes("application/json");
+  const data: unknown = isJson ? await res.json().catch(() => null) : await res.text().catch(() => null);
+
+  if (!res.ok) {
+    const message =
+      (isJson && data && typeof data === "object" && "detail" in data
+        ? String((data as { detail: unknown }).detail)
+        : undefined) ?? `Request failed (${res.status})`;
+    throw new ApiError(message, res.status, data);
+  }
+
+  return data as T;
 }
 
+// ---- Types ----
+export type User = { id: string | number; email: string };
+export type TokenResponse = {
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+};
+export type OCRResult = {
+  image_id: string;
+  symbol: string | null;
+  exchange: string | null;
+  timeframe: string | null;
+  raw_text_count: number;
+};
+
+// Technical indicators only — matches backend TechnicalAnalysisResponse.
 export type TechnicalAnalysis = {
   symbol: string;
   ema20: number;
@@ -43,8 +127,90 @@ export type TechnicalAnalysis = {
   above_average_volume: boolean | null;
 };
 
-// add alongside your existing `ocr` object in `api`:
-market: {
-  analyze: (symbol: string) =>
-    request<TechnicalAnalysis>(`/market/analysis/${symbol}`, { auth: true }),
-},
+export type SentimentInfo = {
+  label: string;
+  score: number;
+  article_count: number;
+  headlines: Record<string, unknown>[];
+};
+
+// Everything TechnicalAnalysis has, PLUS the confidence/risk layer.
+// Matches backend RiskAnalysisResponse (which now extends TechnicalAnalysisResponse).
+export type RiskAnalysis = TechnicalAnalysis & {
+  volatility_pct: number;
+  sentiment: SentimentInfo;
+  confidence_score: number;
+  risk_level: string;
+  reasoning: string[];
+};
+
+export type Report = {
+  id: string;
+  image_id: string;
+  symbol: string;
+  timeframe: string;
+  confidence_score: number;
+  risk_level: string;
+  reasoning: string[];
+  indicators: Record<string, unknown>;
+  llm_report: string;
+  llm_model: string | null;
+  unsupported_numbers: string[];
+  created_at: string;
+};
+
+// ---- Endpoints ----
+export const api = {
+  auth: {
+    register: (email: string, password: string) =>
+      request<User>("/auth/register", {
+        method: "POST",
+        body: { email, password },
+      }),
+    login: (email: string, password: string) =>
+      request<TokenResponse>("/auth/login", {
+        method: "POST",
+        body: { email, password },
+      }),
+    me: () => request<User>("/auth/me", { auth: true }),
+  },
+  ocr: {
+    upload: (file: File) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      return request<OCRResult>("/ocr/upload", {
+        method: "POST",
+        body: formData,
+        auth: true,
+      });
+    },
+  },
+  market: {
+    // exchange (e.g. "NSE", "BSE", "NASDAQ") matters for Indian tickers —
+    // Yahoo Finance needs it to resolve e.g. RELIANCE -> RELIANCE.NS.
+    analyze: (symbol: string, exchange?: string) =>
+      request<TechnicalAnalysis>(
+        `/market/analysis/${encodeURIComponent(symbol)}${exchange ? `?exchange=${encodeURIComponent(exchange)}` : ""}`,
+        { auth: true },
+      ),
+    // Superset of analyze(): same technical fields PLUS confidence_score,
+    // risk_level, reasoning and sentiment. Prefer this one in the UI.
+    risk: (symbol: string, exchange?: string) =>
+      request<RiskAnalysis>(
+        `/market/risk/${encodeURIComponent(symbol)}${exchange ? `?exchange=${encodeURIComponent(exchange)}` : ""}`,
+        { auth: true },
+      ),
+  },
+  reports: {
+    // image_id must belong to the logged-in user's own uploaded chart
+    // (Report.image_id is a required foreign key on the backend).
+    create: (image_id: string, symbol: string, timeframe = "1day", exchange?: string) =>
+      request<Report>("/reports", {
+        method: "POST",
+        auth: true,
+        body: { image_id, symbol, timeframe, exchange },
+      }),
+    get: (reportId: string) =>
+      request<Report>(`/reports/${encodeURIComponent(reportId)}`, { auth: true }),
+  },
+};

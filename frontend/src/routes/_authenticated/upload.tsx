@@ -40,6 +40,10 @@ function UploadPage() {
 
   // Technical + confidence/risk analysis, fetched after the user confirms the symbol.
   const [analysis, setAnalysis] = useState<RiskAnalysis | null>(null);
+  // Exchange used for the current `analysis` (e.g. "NSE") — needed again
+  // when generating the report, since Yahoo Finance needs it to resolve
+  // Indian tickers (RELIANCE -> RELIANCE.NS).
+  const [analysisExchange, setAnalysisExchange] = useState<string | undefined>(undefined);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
 
@@ -113,7 +117,7 @@ function UploadPage() {
           description: `${data.symbol}${data.exchange ? ` · ${data.exchange}` : ""}${data.timeframe ? ` · ${data.timeframe}` : ""}`,
         });
         // Symbol was detected confidently — fetch analysis right away.
-        fetchAnalysis(data.symbol);
+        fetchAnalysis(data.symbol, data.exchange ?? undefined);
       }
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "Something went wrong";
@@ -123,13 +127,14 @@ function UploadPage() {
     }
   };
 
-  const fetchAnalysis = async (symbol: string) => {
+  const fetchAnalysis = async (symbol: string, exchange?: string) => {
     setAnalysisLoading(true);
     setAnalysisError(null);
     setReport(null);
     setReportError(null);
+    setAnalysisExchange(exchange);
     try {
-      const data = await api.market.risk(symbol);
+      const data = await api.market.risk(symbol, exchange);
       setAnalysis(data);
     } catch (err) {
       // err.message is now the backend's specific detail (e.g. "No market
@@ -149,7 +154,12 @@ function UploadPage() {
     setReportLoading(true);
     setReportError(null);
     try {
-      const data = await api.reports.create(result.image_id, analysis.symbol, ANALYSIS_TIMEFRAME);
+      const data = await api.reports.create(
+        result.image_id,
+        analysis.symbol,
+        ANALYSIS_TIMEFRAME,
+        analysisExchange,
+      );
       setReport(data);
       if (data.unsupported_numbers.length > 0) {
         toast.warning("Report generated with a caveat", {
@@ -178,7 +188,7 @@ function UploadPage() {
     toast.success("Details confirmed", {
       description: `${editSymbol.toUpperCase()}${editExchange ? ` · ${editExchange.toUpperCase()}` : ""}${editTimeframe ? ` · ${editTimeframe}` : ""}`,
     });
-    fetchAnalysis(editSymbol.trim().toUpperCase());
+    fetchAnalysis(editSymbol.trim().toUpperCase(), editExchange.trim() || undefined);
   };
 
   const trendIcon = (trend: string) => {

@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Mail, Hash, Shield } from "lucide-react";
+import { Mail, Hash } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { useAuth } from "@/lib/auth-context";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -42,7 +42,6 @@ function ProfilePage() {
         <div className="grid gap-3">
           <Field icon={Mail} label="Email" value={user?.email ?? "—"} mono />
           <Field icon={Hash} label="User ID" value={String(user?.id ?? "—")} mono />
-          <Field icon={Shield} label="Plan" value="Early access" />
         </div>
       </div>
 
@@ -70,9 +69,7 @@ function Field({
         <Icon className="h-4 w-4 text-muted-foreground" strokeWidth={1.5} />
         <span className="text-sm text-muted-foreground">{label}</span>
       </div>
-      <span className={`text-sm text-foreground ${mono ? "font-mono" : ""}`}>
-        {value}
-      </span>
+      <span className={`text-sm text-foreground ${mono ? "font-mono" : ""}`}>{value}</span>
     </div>
   );
 }

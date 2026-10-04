@@ -186,25 +186,29 @@ export const api = {
     },
   },
   market: {
-    analyze: (symbol: string) =>
-      request<TechnicalAnalysis>(`/market/analysis/${encodeURIComponent(symbol)}`, {
-        auth: true,
-      }),
+    // exchange (e.g. "NSE", "BSE", "NASDAQ") matters for Indian tickers —
+    // Yahoo Finance needs it to resolve e.g. RELIANCE -> RELIANCE.NS.
+    analyze: (symbol: string, exchange?: string) =>
+      request<TechnicalAnalysis>(
+        `/market/analysis/${encodeURIComponent(symbol)}${exchange ? `?exchange=${encodeURIComponent(exchange)}` : ""}`,
+        { auth: true },
+      ),
     // Superset of analyze(): same technical fields PLUS confidence_score,
     // risk_level, reasoning and sentiment. Prefer this one in the UI.
-    risk: (symbol: string) =>
-      request<RiskAnalysis>(`/market/risk/${encodeURIComponent(symbol)}`, {
-        auth: true,
-      }),
+    risk: (symbol: string, exchange?: string) =>
+      request<RiskAnalysis>(
+        `/market/risk/${encodeURIComponent(symbol)}${exchange ? `?exchange=${encodeURIComponent(exchange)}` : ""}`,
+        { auth: true },
+      ),
   },
   reports: {
     // image_id must belong to the logged-in user's own uploaded chart
     // (Report.image_id is a required foreign key on the backend).
-    create: (image_id: string, symbol: string, timeframe = "1day") =>
+    create: (image_id: string, symbol: string, timeframe = "1day", exchange?: string) =>
       request<Report>("/reports", {
         method: "POST",
         auth: true,
-        body: { image_id, symbol, timeframe },
+        body: { image_id, symbol, timeframe, exchange },
       }),
     get: (reportId: string) =>
       request<Report>(`/reports/${encodeURIComponent(reportId)}`, { auth: true }),

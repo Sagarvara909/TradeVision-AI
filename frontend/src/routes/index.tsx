@@ -14,8 +14,7 @@ export const Route = createFileRoute("/")({
       { property: "og:title", content: "TradeVision AI" },
       {
         property: "og:description",
-        content:
-          "Explainable AI for trading decisions. Not a bot. Not automation. Just clarity.",
+        content: "Explainable AI for trading decisions. Not a bot. Not automation. Just clarity.",
       },
     ],
   }),
@@ -64,13 +63,11 @@ function Landing() {
             </span>
           </div>
           <h1 className="text-balance text-4xl font-semibold tracking-tight text-foreground md:text-6xl">
-            Understand{" "}
-            <span className="text-primary">why</span>{" "}
-            a signal fires.
+            Understand <span className="text-primary">why</span> a signal fires.
           </h1>
           <p className="mx-auto mt-6 max-w-2xl text-pretty text-base text-muted-foreground md:text-lg">
-            TradeVision AI reads your charts, applies transparent technical analysis, and
-            explains its reasoning in plain language. You keep the trade. We give you the
+            TradeVision AI reads your charts, applies transparent technical analysis, and explains
+            its reasoning in plain language. You keep the trade. We give you the
             <span className="text-foreground"> "why"</span>.
           </p>
 
@@ -90,36 +87,39 @@ function Landing() {
           </p>
         </div>
 
-        {/* Terminal preview */}
         <div className="mx-auto mt-16 max-w-4xl">
-          <div className="glass-panel overflow-hidden rounded-xl shadow-2xl shadow-primary/5">
-            <div className="flex items-center gap-2 border-b border-border/60 bg-panel/60 px-4 py-2.5">
-              <div className="flex gap-1.5">
-                <span className="h-2.5 w-2.5 rounded-full bg-destructive/60" />
-                <span className="h-2.5 w-2.5 rounded-full bg-warning/60" />
-                <span className="h-2.5 w-2.5 rounded-full bg-success/60" />
+          <div className="rounded-2xl border border-border bg-white p-5 shadow-[0_18px_60px_rgb(109_93_251_/_10%)] sm:p-8">
+            <div className="flex flex-col gap-2 border-b border-border pb-5 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.15em] text-primary">
+                  A clearer analysis workflow
+                </p>
+                <h2 className="mt-1 text-lg font-semibold tracking-tight text-foreground">
+                  From chart to context
+                </h2>
               </div>
-              <span className="ml-2 font-mono text-[11px] text-muted-foreground">
-                tradevision · signal · BTCUSDT · 4H
+              <span className="w-fit rounded-full border border-primary/15 bg-primary/[0.06] px-3 py-1 text-xs font-medium text-primary">
+                Built around your data
               </span>
             </div>
-            <div className="grid gap-px bg-border/60 md:grid-cols-3">
-              <TerminalStat label="Signal" value="LONG" tone="success" mono />
-              <TerminalStat label="Confidence" value="72%" mono />
-              <TerminalStat label="RR" value="1 : 2.4" mono />
-            </div>
-            <div className="space-y-3 border-t border-border/60 bg-background/40 p-5">
-              <ReasoningLine
-                tag="RSI"
-                text="Oversold reversal on 4H (28.4 → 41.2) — momentum flip confirmed."
+            <div className="grid gap-3 pt-5 md:grid-cols-3">
+              <WorkflowStep
+                icon={Eye}
+                number="01"
+                title="Upload your chart"
+                text="Start with a chart image you want to understand."
               />
-              <ReasoningLine
-                tag="EMA"
-                text="Price reclaimed 200 EMA at 61,240 — prior resistance now support."
+              <WorkflowStep
+                icon={BarChart3}
+                number="02"
+                title="Review the analysis"
+                text="See the available technical indicators and risk context."
               />
-              <ReasoningLine
-                tag="Vol"
-                text="Buying volume up 38% vs. 20-bar avg on the reclaim candle."
+              <WorkflowStep
+                icon={Brain}
+                number="03"
+                title="Read the reasoning"
+                text="Generate an explanation tied to the analysis results."
               />
             </div>
           </div>
@@ -180,54 +180,32 @@ function Landing() {
   );
 }
 
-function TerminalStat({
-  label,
-  value,
-  tone,
-  mono,
+function WorkflowStep({
+  icon: Icon,
+  number,
+  title,
+  text,
 }: {
-  label: string;
-  value: string;
-  tone?: "success";
-  mono?: boolean;
+  icon: typeof Eye;
+  number: string;
+  title: string;
+  text: string;
 }) {
   return (
-    <div className="bg-panel/40 p-4">
-      <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-        {label}
-      </p>
-      <p
-        className={`mt-1.5 text-2xl font-semibold ${mono ? "font-mono" : ""} ${
-          tone === "success" ? "text-success" : "text-foreground"
-        }`}
-      >
-        {value}
-      </p>
+    <div className="rounded-xl border border-border bg-background/70 p-4">
+      <div className="flex items-center justify-between">
+        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <Icon className="h-4 w-4" />
+        </div>
+        <span className="font-mono text-xs text-muted-foreground">{number}</span>
+      </div>
+      <h3 className="mt-4 text-sm font-semibold text-foreground">{title}</h3>
+      <p className="mt-1 text-sm leading-5 text-muted-foreground">{text}</p>
     </div>
   );
 }
 
-function ReasoningLine({ tag, text }: { tag: string; text: string }) {
-  return (
-    <div className="flex items-start gap-3">
-      <span className="mt-0.5 rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-primary">
-        {tag}
-      </span>
-      <p className="text-sm text-muted-foreground">
-        <span className="text-foreground">{text.split(" — ")[0]}</span>
-        {text.includes(" — ") ? ` — ${text.split(" — ")[1]}` : null}
-      </p>
-    </div>
-  );
-}
-
-function Bullet({
-  children,
-  tone,
-}: {
-  children: React.ReactNode;
-  tone?: "muted";
-}) {
+function Bullet({ children, tone }: { children: React.ReactNode; tone?: "muted" }) {
   return (
     <li className="flex items-start gap-2.5">
       <span

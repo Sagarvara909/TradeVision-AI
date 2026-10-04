@@ -1,104 +1,117 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.security import get_current_user
-from app.infrastructure.db.session import get_db
-from app.domain.models import UploadedImage, Report
-from app.domain.schemas import ReportRequest, ReportResponse
+from app.domain.schemas import QuoteResponse, TimeSeriesResponse, CandleData
+from app.services.market_service import get_quote, get_time_series
+from app.services.technical_analysis_service import run_full_analysis
+from app.domain.schemas import TechnicalAnalysisResponse
 from app.services.risk_service import analyze_symbol, InsufficientDataError
-from app.services.llm_service import generate_report, LLMServiceError
+from app.domain.schemas import RiskAnalysisResponse, SentimentResponse
 
 
-router = APIRouter(prefix="/api/v1/reports", tags=["reports"])
+router = APIRouter(prefix="/api/v1/market", tags=["market"])
 
 
-@router.post("", response_model=ReportResponse)
-def create_report(
-    payload: ReportRequest,
-    current_user=Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    # The image must exist and belong to the caller, since Report.image_id is
-    # a required foreign key and reports are per-user data.
-    image = (
-        db.query(UploadedImage)
-        .filter(UploadedImage.id == payload.image_id, UploadedImage.user_id == current_user.id)
-        .first()
+@router.get("/quote/{symbol}", response_model=QuoteResponse)
+def quote(symbol: str, current_user=Depends(get_current_user)):
+    data = get_quote(symbol)
+    return QuoteResponse(
+        symbol=data["symbol"],
+        name=data.get("name"),
+        exchange=data.get("exchange"),
+        price=float(data["close"]),
+        change=float(data["change"]) if data.get("change") else None,
+        percent_change=float(data["percent_change"]) if data.get("percent_change") else None,
+        volume=int(float(data["volume"])) if data.get("volume") else None,
     )
-    if not image:
-        raise HTTPException(status_code=404, detail="Uploaded image not found.")
 
+
+@router.get("/candles/{symbol}", response_model=TimeSeriesResponse)
+def candles(
+    symbol: str,
+    interval: str = Query(default="1day", description="1min, 5min, 15min, 1h, 1day, 1week"),
+    output_size: int = Query(default=30, ge=1, le=200),
+    current_user=Depends(get_current_user),
+):
+    data = get_time_series(symbol, interval=interval, output_size=output_size)
+    candle_list = [
+        CandleData(
+            datetime=c["datetime"],
+            open=float(c["open"]),
+            high=float(c["high"]),
+            low=float(c["low"]),
+            close=float(c["close"]),
+            volume=int(float(c["volume"])) if c.get("volume") else None,
+        )
+        for c in data.get("values", [])
+    ]
+    return TimeSeriesResponse(symbol=symbol, interval=interval, candles=candle_list)
+
+
+@router.get("/analysis/{symbol}", response_model=TechnicalAnalysisResponse)
+def analysis(
+    symbol: str,
+    interval: str = Query(default="1day"),
+    exchange: str | None = Query(default=None, description="e.g. NSE, BSE, NASDAQ"),
+    current_user=Depends(get_current_user),
+):
+    series = get_time_series(symbol, interval=interval, output_size=60, exchange=exchange)
+    values = series.get("values", [])
+    if not values:
+        raise HTTPException(status_code=404, detail=f"No market data found for symbol '{symbol}'.")
+
+    candles = [
+        {
+            "datetime": c["datetime"],
+            "open": c["open"],
+            "high": c["high"],
+            "low": c["low"],
+            "close": c["close"],
+            "volume": c["volume"],
+        }
+        for c in reversed(values)
+    ]
+
+    result = run_full_analysis(candles)
+    vol = result["volume_analysis"]
+    sr = result["support_resistance"]
+
+    return TechnicalAnalysisResponse(
+        symbol=symbol,
+        ema20=result["ema20"],
+        ema50=result["ema50"],
+        rsi=result["rsi"],
+        macd=result["macd"],
+        macd_signal=result["macd_signal"],
+        macd_histogram=result["macd_histogram"],
+        trend=result["trend"],
+        support=sr["support"],
+        resistance=sr["resistance"],
+        latest_volume=vol["latest_volume"],
+        average_volume=vol["average_volume"],
+        volume_ratio=vol["volume_ratio"],
+        above_average_volume=vol["above_average"],
+    )
+
+
+@router.get("/risk/{symbol}", response_model=RiskAnalysisResponse)
+def risk_analysis(
+    symbol: str,
+    interval: str = Query(default="1day"),
+    exchange: str | None = Query(default=None, description="e.g. NSE, BSE, NASDAQ"),
+    current_user=Depends(get_current_user),
+):
+    # analyze_symbol is the SAME function the /reports endpoint calls, so the
+    # confidence score shown here always matches what gets saved and explained.
     try:
-        analysis = analyze_symbol(payload.symbol, interval=payload.timeframe)
+        result = analyze_symbol(symbol, interval=interval, exchange=exchange)
     except InsufficientDataError as e:
+        # Previously this path could divide by zero on an empty candle list
+        # (e.g. a wrong OCR symbol) and return a raw 500. Now it's a clean 404.
         raise HTTPException(status_code=404, detail=str(e))
 
-    # If Gemini fails, we still save the (already-computed) analysis instead
-    # of losing it, and tell the caller plainly what happened. The confidence
-    # score and reasoning trail don't depend on the LLM at all.
-    llm_model = None
-    unsupported_numbers: list[str] = []
-    try:
-        llm_result = generate_report(analysis)
-        llm_text = llm_result["report"]
-        llm_model = llm_result["model"]
-        unsupported_numbers = llm_result["unsupported_numbers"]
-    except LLMServiceError as e:
-        llm_text = f"[Report generation failed: {e}]"
-
-    report = Report(
-        user_id=current_user.id,
-        image_id=image.id,
-        symbol=payload.symbol,
-        timeframe=payload.timeframe,
-        confidence_score=analysis["confidence_score"],
-        indicators=analysis,
-        llm_report=llm_text,
-    )
-    db.add(report)
-    db.commit()
-    db.refresh(report)
-
-    return ReportResponse(
-        id=report.id,
-        image_id=report.image_id,
-        symbol=report.symbol,
-        timeframe=report.timeframe,
-        confidence_score=analysis["confidence_score"],
-        risk_level=analysis["risk_level"],
-        reasoning=analysis["reasoning"],
-        indicators=analysis,
-        llm_report=report.llm_report,
-        llm_model=llm_model,
-        unsupported_numbers=unsupported_numbers,
-        created_at=report.created_at.isoformat(),
-    )
-
-
-@router.get("/{report_id}", response_model=ReportResponse)
-def get_report(
-    report_id: str,
-    current_user=Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    report = (
-        db.query(Report)
-        .filter(Report.id == report_id, Report.user_id == current_user.id)
-        .first()
-    )
-    if not report:
-        raise HTTPException(status_code=404, detail="Report not found.")
-
-    indicators = report.indicators or {}
-    return ReportResponse(
-        id=report.id,
-        image_id=report.image_id,
-        symbol=report.symbol,
-        timeframe=report.timeframe,
-        confidence_score=indicators.get("confidence_score", report.confidence_score),
-        risk_level=indicators.get("risk_level", "unknown"),
-        reasoning=indicators.get("reasoning", []),
-        indicators=indicators,
-        llm_report=report.llm_report or "",
-        created_at=report.created_at.isoformat(),
+    sentiment_dict = result.pop("sentiment")
+    return RiskAnalysisResponse(
+        **result,
+        sentiment=SentimentResponse(**sentiment_dict),
     )
