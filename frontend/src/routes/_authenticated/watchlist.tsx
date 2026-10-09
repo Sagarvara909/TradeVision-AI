@@ -1,10 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, type FormEvent } from "react";
-import { Star, Plus, X, Bookmark } from "lucide-react";
+import { useEffect, useState, type FormEvent } from "react";
+import { Star, Plus, X, RefreshCw, Loader2 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "sonner";
+import { api, ApiError, type WatchlistItem } from "@/lib/api";
 
 export const Route = createFileRoute("/_authenticated/watchlist")({
   head: () => ({
@@ -13,95 +16,196 @@ export const Route = createFileRoute("/_authenticated/watchlist")({
   component: WatchlistPage,
 });
 
+function changeColor(change: number | null) {
+  if (change === null) return "text-muted-foreground";
+  return change >= 0 ? "text-emerald-500" : "text-red-500";
+}
+
 function WatchlistPage() {
   const [symbol, setSymbol] = useState("");
-  const [symbols, setSymbols] = useState<string[]>([]);
+  const [exchange, setExchange] = useState("");
+  const [items, setItems] = useState<WatchlistItem[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const add = (e: FormEvent) => {
-    e.preventDefault();
-    const s = symbol.trim().toUpperCase();
-    if (!s) return;
-    if (symbols.includes(s)) {
-      setSymbol("");
-      return;
+  const load = async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
+    setError(null);
+    try {
+      const data = await api.watchlist.list();
+      setItems(data.items);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not load your watchlist");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
-    setSymbols([...symbols, s]);
-    setSymbol("");
   };
 
-  const remove = (s: string) => setSymbols(symbols.filter((x) => x !== s));
+  useEffect(() => {
+    load();
+  }, []);
+
+  const add = async (e: FormEvent) => {
+    e.preventDefault();
+    const s = symbol.trim().toUpperCase();
+    if (!s || adding) return;
+    setAdding(true);
+    try {
+      const created = await api.watchlist.add(s, exchange.trim().toUpperCase() || undefined);
+      setItems((prev) => [created, ...(prev ?? [])]);
+      setSymbol("");
+      setExchange("");
+      toast.success(`${created.symbol} added`);
+    } catch (err) {
+      // e.g. 409 "already on your watchlist"
+      toast.error("Could not add symbol", {
+        description: err instanceof ApiError ? err.message : "Something went wrong",
+      });
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const remove = async (item: WatchlistItem) => {
+    setRemovingId(item.id);
+    try {
+      await api.watchlist.remove(item.id);
+      setItems((prev) => (prev ?? []).filter((x) => x.id !== item.id));
+    } catch (err) {
+      toast.error("Could not remove symbol", {
+        description: err instanceof ApiError ? err.message : "Something went wrong",
+      });
+    } finally {
+      setRemovingId(null);
+    }
+  };
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="mx-auto max-w-4xl">
       <PageHeader
         eyebrow="Tracking"
         title="Watchlist"
-        description="Keep symbols you want to revisit in one place."
+        description="Symbols you want to keep an eye on, with live prices. Add the exchange (NSE, BSE, NASDAQ…) so Indian tickers resolve correctly."
       />
 
       <form
         onSubmit={add}
-        className="mb-6 flex flex-col gap-3 rounded-2xl border border-border bg-white p-4 shadow-[0_2px_10px_rgb(15_23_42_/_3%)] sm:flex-row"
+        className="glass-panel mb-6 flex items-center gap-2 rounded-xl p-3"
       >
         <Input
           value={symbol}
           onChange={(e) => setSymbol(e.target.value)}
-          placeholder="Add symbol (e.g. BTCUSDT, AAPL, ES1!)"
-          className="h-11 border-border bg-background/60 font-mono uppercase tracking-wider shadow-none sm:flex-1"
+          placeholder="Symbol (e.g. TCS, AAPL)"
+          className="flex-1 border-0 bg-transparent font-mono uppercase tracking-wider shadow-none focus-visible:ring-0"
           autoCapitalize="characters"
-          aria-label="Stock symbol to add"
         />
-        <Button type="submit" className="h-11 px-5" disabled={!symbol.trim()}>
-          <Plus className="mr-1 h-4 w-4" />
+        <Input
+          value={exchange}
+          onChange={(e) => setExchange(e.target.value)}
+          placeholder="Exchange (NSE)"
+          className="w-36 border-0 bg-transparent font-mono uppercase tracking-wider shadow-none focus-visible:ring-0"
+          autoCapitalize="characters"
+        />
+        <Button type="submit" size="sm" disabled={!symbol.trim() || adding}>
+          {adding ? (
+            <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+          ) : (
+            <Plus className="mr-1 h-4 w-4" />
+          )}
           Add
         </Button>
       </form>
 
-      {symbols.length === 0 ? (
+      {loading ? (
+        <div className="glass-panel space-y-3 rounded-xl p-5">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-10 w-full" />
+          ))}
+        </div>
+      ) : error ? (
+        <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4">
+          <p className="text-sm text-destructive">{error}</p>
+        </div>
+      ) : !items || items.length === 0 ? (
         <EmptyState
           icon={Star}
           title="Your watchlist is empty"
-          description="Add a symbol above to start tracking it. TradeVision will surface signals for watched symbols first."
+          description="Add a symbol above, or use the Watchlist button on any analysis, to start tracking it with live prices."
         />
       ) : (
-        <section className="overflow-hidden rounded-2xl border border-border bg-white shadow-[0_4px_24px_rgb(15_23_42_/_4%)]">
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] border-b border-border bg-slate-50/70 px-5 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-            <span>Symbol</span>
-            <span>Actions</span>
+        <>
+          <div className="mb-2 flex justify-end">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => load(true)}
+              disabled={refreshing}
+              className="text-xs text-muted-foreground"
+            >
+              <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
+              Refresh prices
+            </Button>
           </div>
-          <ul className="divide-y divide-border">
-            {symbols.map((s) => (
+          <ul className="glass-panel divide-y divide-border overflow-hidden rounded-xl">
+            {items.map((item) => (
               <li
-                key={s}
-                className="grid grid-cols-[minmax(0,1fr)_auto] items-center px-5 py-4 transition-colors hover:bg-primary/[0.025]"
+                key={item.id}
+                className="flex items-center justify-between px-5 py-3 transition-colors hover:bg-primary/5"
               >
-                <div className="flex min-w-0 items-center gap-3">
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                    <Star className="h-4 w-4" fill="currentColor" strokeWidth={1.5} />
-                  </div>
-                  <div className="min-w-0">
-                    <span className="block truncate font-mono text-sm font-semibold tracking-wide text-foreground">
-                      {s}
+                <div className="flex items-center gap-3">
+                  <Star className="h-4 w-4 text-primary" fill="currentColor" strokeWidth={1.5} />
+                  <div>
+                    <span className="font-mono text-sm font-medium tracking-wider text-foreground">
+                      {item.symbol}
                     </span>
-                    <span className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
-                      <Bookmark className="h-3 w-3" /> Saved to your watchlist
-                    </span>
+                    {item.exchange ? (
+                      <span className="ml-2 rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                        {item.exchange}
+                      </span>
+                    ) : null}
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+
+                <div className="flex items-center gap-5">
+                  {item.price !== null ? (
+                    <div className="text-right">
+                      <p className="font-mono text-sm text-foreground">{item.price.toFixed(2)}</p>
+                      <p className={`font-mono text-[11px] ${changeColor(item.percent_change)}`}>
+                        {item.percent_change !== null
+                          ? `${item.percent_change >= 0 ? "+" : ""}${item.percent_change.toFixed(2)}%`
+                          : "—"}
+                      </p>
+                    </div>
+                  ) : (
+                    <p
+                      className="max-w-[220px] truncate text-right text-[11px] text-muted-foreground"
+                      title={item.quote_error ?? undefined}
+                    >
+                      {item.quote_error ?? "Price unavailable"}
+                    </p>
+                  )}
                   <button
-                    type="button"
-                    onClick={() => remove(s)}
-                    className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-red-50 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                    aria-label={`Remove ${s} from watchlist`}
+                    onClick={() => remove(item)}
+                    disabled={removingId === item.id}
+                    className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+                    aria-label={`Remove ${item.symbol}`}
                   >
-                    <X className="h-4 w-4" />
+                    {removingId === item.id ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <X className="h-4 w-4" />
+                    )}
                   </button>
                 </div>
               </li>
             ))}
           </ul>
-        </section>
+        </>
       )}
     </div>
   );

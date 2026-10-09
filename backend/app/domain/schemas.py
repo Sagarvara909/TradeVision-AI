@@ -132,3 +132,47 @@ class ChatMessageResponse(BaseModel):
 class ChatHistoryResponse(BaseModel):
     report_id: str
     messages: list[ChatMessageResponse]
+
+
+class HistoryEntryResponse(BaseModel):
+    report_id: str
+    symbol: str
+    timeframe: str
+    trend: str | None = None
+    confidence_score: int
+    risk_level: str
+    created_at: str  # when the report was generated
+    last_viewed_at: str  # most recent time this report was opened
+
+
+class HistoryListResponse(BaseModel):
+    entries: list[HistoryEntryResponse]
+
+
+class SymbolSuggestion(BaseModel):
+    symbol: str
+    last_close: float | None = None  # lets the person sanity-check it against their chart
+
+
+class SymbolSuggestionsResponse(BaseModel):
+    suggestions: list[SymbolSuggestion]
+
+
+class WatchlistAddRequest(BaseModel):
+    symbol: str
+    exchange: str | None = None  # e.g. "NSE", "BSE", "NASDAQ"
+
+
+class WatchlistItemResponse(BaseModel):
+    id: str
+    symbol: str
+    exchange: str | None
+    added_at: str
+    price: float | None = None
+    change: float | None = None
+    percent_change: float | None = None
+    quote_error: str | None = None  # set if the live quote couldn't be fetched
+
+
+class WatchlistListResponse(BaseModel):
+    items: list[WatchlistItemResponse]

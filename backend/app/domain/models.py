@@ -90,7 +90,8 @@ class Watchlist(Base):
     user_id = Column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=False)
     symbol = Column(String, nullable=False)
     added_at = Column(DateTime, default=datetime.utcnow)
-
+    exchange = Column(String, nullable=True)
+    
     user = relationship("User", back_populates="watchlists")
 
 

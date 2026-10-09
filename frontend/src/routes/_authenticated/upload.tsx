@@ -1,13 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState, type DragEvent } from "react";
-import { UploadCloud, ImageIcon, X, Loader2, Sparkles, Pencil, TrendingUp, TrendingDown, Minus, FileText, AlertTriangle } from "lucide-react";
+import { UploadCloud, ImageIcon, X, Loader2, Sparkles, Pencil, TrendingUp, TrendingDown, Minus, FileText, AlertTriangle, MessageCircle, Send, Download, Star } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
-import { api, ApiError, type OCRResult, type RiskAnalysis, type Report } from "@/lib/api";
+import { api, ApiError, type OCRResult, type RiskAnalysis, type Report, type ChatMessage, type SymbolSuggestion } from "@/lib/api";
 
 export const Route = createFileRoute("/_authenticated/upload")({
   head: () => ({
@@ -46,11 +46,27 @@ function UploadPage() {
   const [analysisExchange, setAnalysisExchange] = useState<string | undefined>(undefined);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  // "Did you mean...?" candidates, shown only when a lookup finds no data
+  // (OCR confuses look-alike characters like T/F on small chart fonts).
+  const [suggestions, setSuggestions] = useState<SymbolSuggestion[]>([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
 
   // AI explainable report, generated on demand from the analysis above.
   const [report, setReport] = useState<Report | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
+
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [watchlistLoading, setWatchlistLoading] = useState(false);
+
+  // Floating AI Chat — grounded Q&A on the report above. Only usable once a
+  // report exists (chat endpoints need a report_id to ground answers in).
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatHistoryLoaded, setChatHistoryLoaded] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -130,6 +146,9 @@ function UploadPage() {
   const fetchAnalysis = async (symbol: string, exchange?: string) => {
     setAnalysisLoading(true);
     setAnalysisError(null);
+    setAnalysis(null); // clear any previous symbol's result so a failed
+    // fetch shows the error, not a stale card from the last successful one
+    setSuggestions([]);
     setReport(null);
     setReportError(null);
     setAnalysisExchange(exchange);
@@ -144,9 +163,34 @@ function UploadPage() {
       const message = err instanceof ApiError ? err.message : "Could not fetch market data";
       setAnalysisError(message);
       toast.error("Analysis failed", { description: message });
+      // A 404 means "no data for this symbol" — the likeliest cause is an OCR
+      // misread, so look for look-alike tickers that do have data.
+      if (err instanceof ApiError && err.status === 404) {
+        loadSuggestions(symbol, exchange);
+      }
     } finally {
       setAnalysisLoading(false);
     }
+  };
+
+  const loadSuggestions = async (symbol: string, exchange?: string) => {
+    setSuggestionsLoading(true);
+    try {
+      const data = await api.market.suggest(symbol, exchange);
+      setSuggestions(data.suggestions);
+    } catch {
+      // Suggestions are a convenience; failing to load them shouldn't add a second error.
+      setSuggestions([]);
+    } finally {
+      setSuggestionsLoading(false);
+    }
+  };
+
+  // Accepting a suggestion is an explicit click — the symbol is never swapped
+  // silently. Update the preview fields too so what's shown matches what's analysed.
+  const applySuggestion = (symbol: string) => {
+    setEditSymbol(symbol);
+    fetchAnalysis(symbol, analysisExchange);
   };
 
   const generateReport = async () => {
@@ -161,6 +205,10 @@ function UploadPage() {
         analysisExchange,
       );
       setReport(data);
+      // New report -> old chat (if any, from a previous symbol) no longer applies.
+      setChatMessages([]);
+      setChatHistoryLoaded(false);
+      setChatOpen(false);
       if (data.unsupported_numbers.length > 0) {
         toast.warning("Report generated with a caveat", {
           description: "Some figures in the report could not be traced back to the input data.",
@@ -176,6 +224,93 @@ function UploadPage() {
       setReportLoading(false);
     }
   };
+
+  const downloadPdf = async () => {
+    if (!report) return;
+    setPdfLoading(true);
+    try {
+      await api.reports.downloadPdf(report.id, report.symbol);
+    } catch (err) {
+      toast.error("PDF download failed", {
+        description: err instanceof ApiError ? err.message : "Could not download the PDF",
+      });
+    } finally {
+      setPdfLoading(false);
+    }
+  };
+
+  const addToWatchlist = async () => {
+    if (!analysis) return;
+    setWatchlistLoading(true);
+    try {
+      await api.watchlist.add(analysis.symbol, analysisExchange);
+      toast.success(`${analysis.symbol} added to your watchlist`);
+    } catch (err) {
+      // 409 = already on the list, which is fine to report plainly.
+      toast.error("Could not add to watchlist", {
+        description: err instanceof ApiError ? err.message : "Something went wrong",
+      });
+    } finally {
+      setWatchlistLoading(false);
+    }
+  };
+
+  const openChat = async () => {
+    setChatOpen(true);
+    if (!report || chatHistoryLoaded) return;
+    try {
+      const history = await api.chat.history(report.id);
+      setChatMessages(history.messages);
+    } catch {
+      // No history yet is fine — the panel just starts empty.
+    } finally {
+      setChatHistoryLoaded(true);
+    }
+  };
+
+  const sendChatMessage = async () => {
+    const question = chatInput.trim();
+    if (!question || !report || chatLoading) return;
+
+    const optimisticUserMsg: ChatMessage = {
+      id: `local-${Date.now()}`,
+      role: "user",
+      content: question,
+      created_at: new Date().toISOString(),
+    };
+    setChatMessages((prev) => [...prev, optimisticUserMsg]);
+    setChatInput("");
+    setChatLoading(true);
+
+    try {
+      const reply = await api.chat.ask(report.id, question);
+      setChatMessages((prev) => [...prev, reply]);
+      if (reply.unsupported_numbers && reply.unsupported_numbers.length > 0) {
+        toast.warning("Answer has an unverified number", {
+          description: reply.unsupported_numbers.join(", "),
+        });
+      }
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Could not get a reply";
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: `error-${Date.now()}`,
+          role: "assistant",
+          content: `⚠️ ${message}`,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (chatOpen) {
+      chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [chatMessages, chatOpen]);
 
   const confirmDetails = () => {
     if (!editSymbol.trim()) {
@@ -321,9 +456,25 @@ function UploadPage() {
                   <p className="font-mono text-[11px] uppercase tracking-widest text-primary">
                     Technical analysis · {analysis.symbol}
                   </p>
-                  <div className="flex items-center gap-1.5 text-xs capitalize text-muted-foreground">
-                    {trendIcon(analysis.trend)}
-                    {analysis.trend}
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1.5 text-xs capitalize text-muted-foreground">
+                      {trendIcon(analysis.trend)}
+                      {analysis.trend}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={addToWatchlist}
+                      disabled={watchlistLoading}
+                      className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:opacity-50"
+                      aria-label={`Add ${analysis.symbol} to watchlist`}
+                    >
+                      {watchlistLoading ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <Star className="h-3 w-3" />
+                      )}
+                      Watchlist
+                    </button>
                   </div>
                 </div>
                 <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -427,11 +578,23 @@ function UploadPage() {
                     <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-foreground">
                       {report.llm_report}
                     </p>
-                    {report.llm_model ? (
-                      <p className="mt-3 text-[11px] text-muted-foreground">
-                        Generated by {report.llm_model}
-                      </p>
-                    ) : null}
+                    <div className="mt-3 flex items-center justify-between">
+                      {report.llm_model ? (
+                        <p className="text-[11px] text-muted-foreground">
+                          Generated by {report.llm_model}
+                        </p>
+                      ) : (
+                        <span />
+                      )}
+                      <Button size="sm" variant="outline" onClick={downloadPdf} disabled={pdfLoading}>
+                        {pdfLoading ? (
+                          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Download className="mr-1.5 h-3.5 w-3.5" />
+                        )}
+                        Download PDF
+                      </Button>
+                    </div>
                   </>
                 ) : reportError ? (
                   <div className="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3">
@@ -450,6 +613,36 @@ function UploadPage() {
           ) : analysisError ? (
             <div className="mt-4 rounded-xl border border-destructive/30 bg-destructive/5 p-4">
               <p className="text-sm text-destructive">{analysisError}</p>
+              {suggestionsLoading ? (
+                <p className="mt-2 text-xs text-muted-foreground">Checking for similar tickers…</p>
+              ) : suggestions.length > 0 ? (
+                <div className="mt-3">
+                  <p className="text-xs text-muted-foreground">
+                    The symbol may have been misread. Did you mean:
+                  </p>
+                  <div className="mt-1.5 flex flex-wrap gap-2">
+                    {suggestions.map((sug) => (
+                      <button
+                        key={sug.symbol}
+                        type="button"
+                        onClick={() => applySuggestion(sug.symbol)}
+                        className="rounded-md border border-border bg-background px-2.5 py-1 font-mono text-xs text-foreground transition-colors hover:border-primary hover:text-primary"
+                      >
+                        {sug.symbol}
+                        {sug.last_close !== null ? ` · last ${sug.last_close.toFixed(2)}` : ""}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-muted-foreground">
+                    Compare the price with your chart before accepting.
+                  </p>
+                </div>
+              ) : (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  No similar tickers found. If this image isn't a trading chart, or the symbol
+                  looks wrong, use Edit on the right to enter it manually.
+                </p>
+              )}
             </div>
           ) : null}
         </div>
@@ -574,6 +767,95 @@ function UploadPage() {
           </div>
         </aside>
       </div>
+
+      {/* Floating AI Chat — only usable once a report exists, since answers
+          are grounded in that specific report's data. */}
+      {report && !chatOpen ? (
+        <button
+          type="button"
+          onClick={openChat}
+          className="fixed bottom-6 right-6 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-transform hover:scale-105"
+          aria-label="Open AI chat about this report"
+        >
+          <MessageCircle className="h-6 w-6" />
+        </button>
+      ) : null}
+
+      {report && chatOpen ? (
+        <div className="fixed bottom-6 right-6 z-40 flex h-[520px] w-[380px] max-w-[calc(100vw-3rem)] flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl">
+          <div className="flex items-center justify-between border-b border-border px-4 py-3">
+            <div>
+              <p className="text-sm font-medium text-foreground">Ask about {report.symbol}</p>
+              <p className="text-[11px] text-muted-foreground">Answers are grounded in this report only</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setChatOpen(false)}
+              className="rounded-md p-1 text-muted-foreground hover:text-foreground"
+              aria-label="Close chat"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
+            {chatMessages.length === 0 ? (
+              <p className="pt-4 text-center text-xs text-muted-foreground">
+                Ask a question about this analysis — e.g. "Why is RSI near oversold?"
+              </p>
+            ) : (
+              chatMessages.map((m) => (
+                <div
+                  key={m.id}
+                  className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
+                >
+                  <div
+                    className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
+                      m.role === "user"
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-panel/60 text-foreground"
+                    }`}
+                  >
+                    <p className="whitespace-pre-wrap">{m.content}</p>
+                  </div>
+                </div>
+              ))
+            )}
+            {chatLoading ? (
+              <div className="flex justify-start">
+                <div className="max-w-[85%] rounded-lg bg-panel/60 px-3 py-2">
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                </div>
+              </div>
+            ) : null}
+            <div ref={chatEndRef} />
+          </div>
+
+          <div className="flex items-center gap-2 border-t border-border p-3">
+            <Input
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  sendChatMessage();
+                }
+              }}
+              placeholder="Ask a question…"
+              disabled={chatLoading}
+              className="flex-1"
+            />
+            <Button
+              size="icon"
+              onClick={sendChatMessage}
+              disabled={chatLoading || !chatInput.trim()}
+              aria-label="Send"
+            >
+              <Send className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

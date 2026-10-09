@@ -12,6 +12,8 @@ string — so technical_analysis_service.py and risk_service.py did not need
 to change at all.
 """
 
+from concurrent.futures import ThreadPoolExecutor
+
 import yfinance as yf
 from fastapi import HTTPException
 
@@ -142,3 +144,71 @@ def get_time_series(
         )
 
     return {"values": values}
+
+
+# ---------------------------------------------------------------------------
+# "Did you mean...?" suggestions
+#
+# OCR on small chart-title fonts confuses look-alike characters (T/F, O/0,
+# S/5 ...). When a symbol returns no data, we try single-character swaps of
+# those look-alikes and report which variants really exist on Yahoo Finance.
+# These are only ever SUGGESTIONS for the person to accept — a symbol is never
+# silently rewritten, because analysing the wrong stock without telling anyone
+# would be worse than showing an error.
+# ---------------------------------------------------------------------------
+
+OCR_CONFUSABLES = {
+    "F": "TEP", "T": "FIL", "E": "FP", "P": "FR", "R": "P",
+    "I": "L1T", "L": "I1", "1": "IL",
+    "O": "0QD", "0": "OQD", "Q": "O0", "D": "O0",
+    "S": "5", "5": "S", "B": "8", "8": "B",
+    "G": "6C", "6": "G", "C": "GO",
+    "U": "V", "V": "UY", "Y": "V", "M": "N", "N": "M", "Z": "2", "2": "Z",
+}
+MAX_SUGGEST_CANDIDATES = 16  # each candidate is a network lookup, so keep it bounded
+MAX_SUGGESTIONS = 3
+
+
+def _confusable_variants(symbol: str) -> list[str]:
+    """All single-character look-alike swaps of `symbol`, in position order."""
+    s = symbol.upper().strip()
+    seen = {s}
+    variants: list[str] = []
+    for i, ch in enumerate(s):
+        for alt in OCR_CONFUSABLES.get(ch, ""):
+            candidate = s[:i] + alt + s[i + 1:]
+            if candidate not in seen:
+                seen.add(candidate)
+                variants.append(candidate)
+    return variants[:MAX_SUGGEST_CANDIDATES]
+
+
+def _last_close_if_listed(symbol: str, exchange: str | None) -> float | None:
+    """Last daily close if Yahoo has data for this ticker, else None."""
+    try:
+        df = yf.Ticker(_resolve_symbol(symbol, exchange)).history(period="5d", interval="1d")
+        if df.empty:
+            return None
+        return round(float(df["Close"].iloc[-1]), 2)
+    except Exception:
+        return None
+
+
+def suggest_symbols(symbol: str, exchange: str | None = None) -> list[dict]:
+    """
+    Look-alike variants of `symbol` that actually have market data, each with
+    its last close so the person can sanity-check it against their chart.
+    Returns [{"symbol": "TCS", "last_close": 2075.25}, ...], at most
+    MAX_SUGGESTIONS, in the order the variants were generated.
+    """
+    candidates = _confusable_variants(symbol)
+    if not candidates:
+        return []
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        closes = list(pool.map(lambda c: _last_close_if_listed(c, exchange), candidates))
+    found = [
+        {"symbol": c, "last_close": price}
+        for c, price in zip(candidates, closes)
+        if price is not None
+    ]
+    return found[:MAX_SUGGESTIONS]

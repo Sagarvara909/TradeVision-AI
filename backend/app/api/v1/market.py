@@ -2,11 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.security import get_current_user
 from app.domain.schemas import QuoteResponse, TimeSeriesResponse, CandleData
-from app.services.market_service import get_quote, get_time_series
+from app.services.market_service import get_quote, get_time_series, suggest_symbols
 from app.services.technical_analysis_service import run_full_analysis
 from app.domain.schemas import TechnicalAnalysisResponse
 from app.services.risk_service import analyze_symbol, InsufficientDataError
 from app.domain.schemas import RiskAnalysisResponse, SentimentResponse
+from app.domain.schemas import SymbolSuggestion, SymbolSuggestionsResponse
 
 
 router = APIRouter(prefix="/api/v1/market", tags=["market"])
@@ -114,4 +115,21 @@ def risk_analysis(
     return RiskAnalysisResponse(
         **result,
         sentiment=SentimentResponse(**sentiment_dict),
+    )
+
+
+@router.get("/suggest/{symbol}", response_model=SymbolSuggestionsResponse)
+def suggest(
+    symbol: str,
+    exchange: str | None = Query(default=None, description="e.g. NSE, BSE, NASDAQ"),
+    current_user=Depends(get_current_user),
+):
+    """
+    "Did you mean...?" for a symbol that returned no data. OCR on small chart
+    fonts confuses look-alike characters (T/F, O/0, S/5), so this tries those
+    swaps and returns only variants that really have market data. Suggestions
+    only — the caller decides whether to accept one; nothing is rewritten here.
+    """
+    return SymbolSuggestionsResponse(
+        suggestions=[SymbolSuggestion(**s) for s in suggest_symbols(symbol, exchange)]
     )

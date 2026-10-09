@@ -159,6 +159,42 @@ export type Report = {
   created_at: string;
 };
 
+export type ChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+  llm_model?: string | null;
+  unsupported_numbers?: string[];
+};
+
+export type ChatHistory = {
+  report_id: string;
+  messages: ChatMessage[];
+};
+
+export type WatchlistItem = {
+  id: string;
+  symbol: string;
+  exchange: string | null;
+  added_at: string;
+  price: number | null;
+  change: number | null;
+  percent_change: number | null;
+  quote_error: string | null;
+};
+
+export type HistoryEntry = {
+  report_id: string;
+  symbol: string;
+  timeframe: string;
+  trend: string | null;
+  confidence_score: number;
+  risk_level: string;
+  created_at: string;
+  last_viewed_at: string;
+};
+
 // ---- Endpoints ----
 export const api = {
   auth: {
@@ -212,5 +248,71 @@ export const api = {
       }),
     get: (reportId: string) =>
       request<Report>(`/reports/${encodeURIComponent(reportId)}`, { auth: true }),
+    // The PDF endpoint is JWT-protected, so a plain <a href> can't download it
+    // (the browser wouldn't send the Authorization header). Fetch it as a blob
+    // with the token, then trigger the download from an object URL instead.
+    downloadPdf: async (reportId: string, symbol: string) => {
+      const token = tokenStore.getAccess();
+      let res: Response;
+      try {
+        res = await fetch(`${API_BASE_URL}/reports/${encodeURIComponent(reportId)}/pdf`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+      } catch (err) {
+        throw new ApiError(err instanceof Error ? err.message : "Network error", 0, null);
+      }
+      if (!res.ok) {
+        let detail = `Request failed (${res.status})`;
+        try {
+          const body = await res.json();
+          if (body && typeof body.detail === "string") detail = body.detail;
+        } catch {
+          /* non-JSON error body — keep the generic message */
+        }
+        throw new ApiError(detail, res.status, null);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `TradeVision_${symbol}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    },
+  },
+  chat: {
+    // Answers are grounded in the report's own data — not free-form chat.
+    ask: (reportId: string, message: string) =>
+      request<ChatMessage>(`/chat/${encodeURIComponent(reportId)}`, {
+        method: "POST",
+        auth: true,
+        body: { message },
+      }),
+    history: (reportId: string) =>
+      request<ChatHistory>(`/chat/${encodeURIComponent(reportId)}`, { auth: true }),
+  },
+  history: {
+    // Most-recently-viewed reports first; opening an old report again
+    // bumps it back to the top, same as a browser's history page.
+    list: (limit = 50) =>
+      request<{ entries: HistoryEntry[] }>(`/history?limit=${limit}`, { auth: true }),
+  },
+  watchlist: {
+    // Each item comes back with a live quote; if a quote can't be fetched
+    // for one symbol, that row has quote_error set instead of failing the list.
+    list: () => request<{ items: WatchlistItem[] }>("/watchlist", { auth: true }),
+    add: (symbol: string, exchange?: string) =>
+      request<WatchlistItem>("/watchlist", {
+        method: "POST",
+        auth: true,
+        body: { symbol, exchange },
+      }),
+    remove: (itemId: string) =>
+      request<{ status: string }>(`/watchlist/${encodeURIComponent(itemId)}`, {
+        method: "DELETE",
+        auth: true,
+      }),
   },
 };
