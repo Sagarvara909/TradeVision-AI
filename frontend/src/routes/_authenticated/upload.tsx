@@ -19,12 +19,7 @@ export const Route = createFileRoute("/_authenticated/upload")({
 const MAX_SIZE = 8 * 1024 * 1024;
 const ACCEPTED = ["image/png", "image/jpeg", "image/webp"];
 
-// The backend's technical/risk pipeline currently always runs on daily
-// candles regardless of what the chart screenshot's own timeframe says
-// (OCR-read labels like "5m" don't map directly to Twelve Data's interval
-// strings). This is a known simplification, not a bug — mapping chart
-// timeframe -> API interval is future work.
-const ANALYSIS_TIMEFRAME = "1day";
+export const TIMEFRAME_OPTIONS = ["5m", "15m", "30m", "1h", "1d"] as const;
 
 function UploadPage() {
   const [file, setFile] = useState<File | null>(null);
@@ -37,6 +32,10 @@ function UploadPage() {
   const [editExchange, setEditExchange] = useState("");
   const [editTimeframe, setEditTimeframe] = useState("");
   const [editing, setEditing] = useState(false);
+
+  // Timeframe used for market and risk analysis (e.g. "5m", "15m", "1h", "1d").
+  // Initialized automatically from OCR, and switchable via quick pills.
+  const [analysisTimeframe, setAnalysisTimeframe] = useState<string>("1d");
 
   // Technical + confidence/risk analysis, fetched after the user confirms the symbol.
   const [analysis, setAnalysis] = useState<RiskAnalysis | null>(null);
@@ -129,11 +128,13 @@ function UploadPage() {
           description: "Please confirm the symbol below before continuing.",
         });
       } else {
+        const detectedTf = data.timeframe || "1d";
+        setAnalysisTimeframe(detectedTf);
         toast.success("Chart read successfully", {
-          description: `${data.symbol}${data.exchange ? ` · ${data.exchange}` : ""}${data.timeframe ? ` · ${data.timeframe}` : ""}`,
+          description: `${data.symbol}${data.exchange ? ` · ${data.exchange}` : ""}${detectedTf ? ` · ${detectedTf}` : ""}`,
         });
-        // Symbol was detected confidently — fetch analysis right away.
-        fetchAnalysis(data.symbol, data.exchange ?? undefined);
+        // Symbol was detected confidently — fetch analysis right away with detected timeframe.
+        fetchAnalysis(data.symbol, data.exchange ?? undefined, detectedTf);
       }
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "Something went wrong";
@@ -143,7 +144,9 @@ function UploadPage() {
     }
   };
 
-  const fetchAnalysis = async (symbol: string, exchange?: string) => {
+  const fetchAnalysis = async (symbol: string, exchange?: string, timeframe?: string) => {
+    const activeTf = timeframe ?? analysisTimeframe;
+    setAnalysisTimeframe(activeTf);
     setAnalysisLoading(true);
     setAnalysisError(null);
     setAnalysis(null); // clear any previous symbol's result so a failed
@@ -153,7 +156,7 @@ function UploadPage() {
     setReportError(null);
     setAnalysisExchange(exchange);
     try {
-      const data = await api.market.risk(symbol, exchange);
+      const data = await api.market.risk(symbol, exchange, activeTf);
       setAnalysis(data);
     } catch (err) {
       // err.message is now the backend's specific detail (e.g. "No market
@@ -190,7 +193,7 @@ function UploadPage() {
   // silently. Update the preview fields too so what's shown matches what's analysed.
   const applySuggestion = (symbol: string) => {
     setEditSymbol(symbol);
-    fetchAnalysis(symbol, analysisExchange);
+    fetchAnalysis(symbol, analysisExchange, analysisTimeframe);
   };
 
   const generateReport = async () => {
@@ -201,7 +204,7 @@ function UploadPage() {
       const data = await api.reports.create(
         result.image_id,
         analysis.symbol,
-        ANALYSIS_TIMEFRAME,
+        analysisTimeframe || "1d",
         analysisExchange,
       );
       setReport(data);
@@ -320,10 +323,12 @@ function UploadPage() {
       return;
     }
     setEditing(false);
+    const tf = editTimeframe.trim() || analysisTimeframe;
+    setAnalysisTimeframe(tf);
     toast.success("Details confirmed", {
-      description: `${editSymbol.toUpperCase()}${editExchange ? ` · ${editExchange.toUpperCase()}` : ""}${editTimeframe ? ` · ${editTimeframe}` : ""}`,
+      description: `${editSymbol.toUpperCase()}${editExchange ? ` · ${editExchange.toUpperCase()}` : ""}${tf ? ` · ${tf}` : ""}`,
     });
-    fetchAnalysis(editSymbol.trim().toUpperCase(), editExchange.trim() || undefined);
+    fetchAnalysis(editSymbol.trim().toUpperCase(), editExchange.trim() || undefined, tf);
   };
 
   const trendIcon = (trend: string) => {
@@ -477,6 +482,39 @@ function UploadPage() {
                     </button>
                   </div>
                 </div>
+
+                {/* Intraday & Daily Timeframe Switcher */}
+                <div className="mt-3 flex items-center justify-between border-t border-border/50 pt-3">
+                  <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Timeframe:
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {TIMEFRAME_OPTIONS.map((tf) => {
+                      const isActive = analysisTimeframe.toLowerCase() === tf.toLowerCase();
+                      return (
+                        <button
+                          key={tf}
+                          type="button"
+                          onClick={() => {
+                            setAnalysisTimeframe(tf);
+                            setEditTimeframe(tf);
+                            if (analysis?.symbol) {
+                              fetchAnalysis(analysis.symbol, analysisExchange, tf);
+                            }
+                          }}
+                          className={`rounded px-2 py-0.5 font-mono text-[11px] transition-colors ${
+                            isActive
+                              ? "bg-primary text-primary-foreground font-semibold shadow-xs"
+                              : "border border-border/70 bg-panel/30 text-muted-foreground hover:bg-panel hover:text-foreground"
+                          }`}
+                        >
+                          {tf}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
                 <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
                   <MetricTile label="RSI (14)" value={analysis.rsi.toFixed(1)} />
                   <MetricTile label="EMA 20" value={analysis.ema20.toFixed(2)} />

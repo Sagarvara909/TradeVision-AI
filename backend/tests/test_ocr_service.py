@@ -5,7 +5,10 @@ Test cases are built from real PaddleOCR output collected during manual
 testing (see backend/test_ocr.py). This protects the parsing heuristic
 from regressing as it gets tuned further.
 """
-import pytest
+try:
+    import pytest
+except ImportError:
+    pytest = None
 from app.services.ocr_service import parse_chart_metadata
 
 
@@ -82,7 +85,36 @@ def test_tatasteel_extracts_correctly():
     assert result["timeframe"] == "5m"
 
 
+TATAPOWER_TEXT = [
+    "TATAPOWER5NSE",
+    "346.00",
+    "O341.55 H342.60 L341.50 C342.15 +0.60 (+0.18%)",
+    "Positions",
+    "BUY @ 342.45",
+    "SELL @ 342.30",
+    "Volume48.37K",
+    "1D 5D 1M 3M",
+    "12:12:38 (UTC+5:30)",
+]
+
+
+def test_tatapower_extracts_correctly():
+    result = parse_chart_metadata(TATAPOWER_TEXT)
+    assert result["symbol"] == "TATAPOWER"
+    assert result["exchange"] == "NSE"
+    assert result["timeframe"] == "5m"
+
+
 def test_empty_input_returns_all_none():
     """Edge case: no text detected at all should not crash, just return nulls."""
     result = parse_chart_metadata([])
     assert result == {"symbol": None, "exchange": None, "timeframe": None}
+
+
+if __name__ == "__main__":
+    test_nifty_index_chart_not_blocked_by_blacklist()
+    test_blacklist_still_applies_to_unanchored_fallback()
+    test_tatasteel_extracts_correctly()
+    test_tatapower_extracts_correctly()
+    test_empty_input_returns_all_none()
+    print("✅ All OCR unit tests passed successfully!")

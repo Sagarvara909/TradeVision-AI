@@ -28,18 +28,46 @@ INDEX_SYMBOL_MAP = {
     "SENSEX": "^BSESN",
 }
 
-# Twelve Data-style interval string -> yfinance interval string.
-INTERVAL_MAP = {
-    "1min": "1m", "5min": "5m", "15min": "15m", "30min": "30m",
-    "1h": "60m", "1day": "1d", "1week": "1wk", "1month": "1mo",
+# Twelve Data-style / OCR timeframe string -> (yfinance interval string, lookback period).
+INTERVAL_LOOKUP = {
+    "1m": ("1m", "7d"),
+    "1min": ("1m", "7d"),
+    "2m": ("2m", "60d"),
+    "3m": ("5m", "60d"),
+    "5m": ("5m", "60d"),
+    "5min": ("5m", "60d"),
+    "15m": ("15m", "60d"),
+    "15min": ("15m", "60d"),
+    "30m": ("30m", "60d"),
+    "30min": ("30m", "60d"),
+    "1h": ("60m", "730d"),
+    "60m": ("60m", "730d"),
+    "60min": ("60m", "730d"),
+    "4h": ("60m", "730d"),
+    "1d": ("1d", "2y"),
+    "d": ("1d", "2y"),
+    "1day": ("1d", "2y"),
+    "daily": ("1d", "2y"),
+    "1w": ("1wk", "5y"),
+    "w": ("1wk", "5y"),
+    "1wk": ("1wk", "5y"),
+    "1week": ("1wk", "5y"),
+    "weekly": ("1wk", "5y"),
+    "1mo": ("1mo", "10y"),
+    "1month": ("1mo", "10y"),
+    "monthly": ("1mo", "10y"),
 }
 
-# yfinance takes a lookback *period*, not a candle count; pick one generous
-# enough that tail(output_size) always has enough rows for EMA50 etc.
-PERIOD_MAP = {
-    "1m": "7d", "5m": "60d", "15m": "60d", "30m": "60d",
-    "60m": "730d", "1d": "2y", "1wk": "5y", "1mo": "10y",
-}
+
+def normalize_interval(interval: str | None) -> tuple[str, str]:
+    """Resolve any OCR / user timeframe string into valid (yf_interval, period)."""
+    if not interval:
+        return "1d", "2y"
+    clean = interval.strip()
+    if clean in ("1M", "M", "1mo", "1month", "month"):
+        return "1mo", "10y"
+    return INTERVAL_LOOKUP.get(clean.lower(), ("1d", "2y"))
+
 
 
 def _resolve_symbol(symbol: str, exchange: str | None = None) -> str:
@@ -114,11 +142,14 @@ def get_time_series(
     callers' `float(c["close"])` etc. keep working unchanged.
     """
     yf_symbol = _resolve_symbol(symbol, exchange)
-    yf_interval = INTERVAL_MAP.get(interval, "1d")
-    period = PERIOD_MAP.get(yf_interval, "2y")
+    yf_interval, period = normalize_interval(interval)
 
     ticker = yf.Ticker(yf_symbol)
     df = ticker.history(period=period, interval=yf_interval)
+
+    # If intraday data is empty (e.g., market closed/no intraday), gracefully fall back to daily
+    if df.empty and yf_interval != "1d":
+        df = ticker.history(period="2y", interval="1d")
 
     if df.empty:
         raise HTTPException(
@@ -157,6 +188,8 @@ def get_time_series(
 # would be worse than showing an error.
 # ---------------------------------------------------------------------------
 
+import difflib
+
 OCR_CONFUSABLES = {
     "F": "TEP", "T": "FIL", "E": "FP", "P": "FR", "R": "P",
     "I": "L1T", "L": "I1", "1": "IL",
@@ -165,21 +198,61 @@ OCR_CONFUSABLES = {
     "G": "6C", "6": "G", "C": "GO",
     "U": "V", "V": "UY", "Y": "V", "M": "N", "N": "M", "Z": "2", "2": "Z",
 }
+
+POPULAR_SYMBOLS = [
+    # Prominent Indian tickers (NSE/BSE)
+    "TATAPOWER", "TATASTEEL", "TATAMOTORS", "TCS", "INFY", "RELIANCE",
+    "HDFCBANK", "ICICIBANK", "SBIN", "BHARTIARTL", "ITC", "KOTAKBANK",
+    "LT", "AXISBANK", "HINDUNILVR", "BAJFINANCE", "MARUTI", "ASIANPAINT",
+    "SUNPHARMA", "TITAN", "ULTRACEMCO", "WIPRO", "POWERGRID", "NTPC",
+    "COALINDIA", "ONGC", "JSWSTEEL", "ADANIENT", "ADANIPORTS", "ADANIPOWER",
+    "NHPC", "IDFCFIRSTB", "ZOMATO", "PAYTM", "JIOFIN", "VEDL", "IRCTC",
+    "BEL", "HAL", "BHEL", "IOC", "BPCL", "GAIL", "SAIL", "PFC", "REC",
+    # Prominent US tickers
+    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "NFLX", "AMD", "INTC",
+]
+
 MAX_SUGGEST_CANDIDATES = 16  # each candidate is a network lookup, so keep it bounded
 MAX_SUGGESTIONS = 3
 
 
 def _confusable_variants(symbol: str) -> list[str]:
-    """All single-character look-alike swaps of `symbol`, in position order."""
+    """Look-alike, fuzzy, and missing-boundary variants of `symbol`."""
     s = symbol.upper().strip()
     seen = {s}
     variants: list[str] = []
+
+    # 1. Fuzzy match against popular stocks first (e.g. ATAPOWER -> TATAPOWER)
+    fuzzy_matches = difflib.get_close_matches(s, POPULAR_SYMBOLS, n=4, cutoff=0.55)
+    for fm in fuzzy_matches:
+        if fm not in seen:
+            seen.add(fm)
+            variants.append(fm)
+
+    # 2. Check single-character missing prefix/suffix (e.g. clipped 'T' -> TATAPOWER, or duplicate trailing char)
+    for ch in "TSRNPB":
+        candidate = ch + s
+        if candidate not in seen:
+            seen.add(candidate)
+            variants.append(candidate)
+    if len(s) > 3 and s[-1] == s[-2]:  # e.g. TATAPOWERR -> TATAPOWER
+        cand = s[:-1]
+        if cand not in seen:
+            seen.add(cand)
+            variants.append(cand)
+
+    # 3. Single-character look-alike swaps
     for i, ch in enumerate(s):
         for alt in OCR_CONFUSABLES.get(ch, ""):
             candidate = s[:i] + alt + s[i + 1:]
             if candidate not in seen:
                 seen.add(candidate)
                 variants.append(candidate)
+            if len(variants) >= MAX_SUGGEST_CANDIDATES:
+                break
+        if len(variants) >= MAX_SUGGEST_CANDIDATES:
+            break
+
     return variants[:MAX_SUGGEST_CANDIDATES]
 
 

@@ -95,7 +95,12 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 }
 
 // ---- Types ----
-export type User = { id: string | number; email: string };
+export type User = { id: string | number; email: string; created_at?: string | null };
+export type UserSettings = {
+  theme: string;
+  default_exchange: string | null;
+  email_alerts: boolean;
+};
 export type TokenResponse = {
   access_token: string;
   refresh_token: string;
@@ -214,6 +219,19 @@ export const api = {
         body: { email, password },
       }),
     me: () => request<User>("/auth/me", { auth: true }),
+    changePassword: (current_password: string, new_password: string) =>
+      request<{ status: string; message: string }>("/auth/change-password", {
+        method: "POST",
+        auth: true,
+        body: { current_password, new_password },
+      }),
+    getSettings: () => request<UserSettings>("/auth/settings", { auth: true }),
+    updateSettings: (payload: Partial<UserSettings>) =>
+      request<UserSettings>("/auth/settings", {
+        method: "PATCH",
+        auth: true,
+        body: payload,
+      }),
   },
   ocr: {
     upload: (file: File) => {
@@ -229,18 +247,28 @@ export const api = {
   market: {
     // exchange (e.g. "NSE", "BSE", "NASDAQ") matters for Indian tickers —
     // Yahoo Finance needs it to resolve e.g. RELIANCE -> RELIANCE.NS.
-    analyze: (symbol: string, exchange?: string) =>
-      request<TechnicalAnalysis>(
-        `/market/analysis/${encodeURIComponent(symbol)}${exchange ? `?exchange=${encodeURIComponent(exchange)}` : ""}`,
+    analyze: (symbol: string, exchange?: string, interval?: string) => {
+      const params = new URLSearchParams();
+      if (exchange) params.set("exchange", exchange);
+      if (interval) params.set("interval", interval);
+      const qs = params.toString();
+      return request<TechnicalAnalysis>(
+        `/market/analysis/${encodeURIComponent(symbol)}${qs ? `?${qs}` : ""}`,
         { auth: true },
-      ),
+      );
+    },
     // Superset of analyze(): same technical fields PLUS confidence_score,
     // risk_level, reasoning and sentiment. Prefer this one in the UI.
-    risk: (symbol: string, exchange?: string) =>
-      request<RiskAnalysis>(
-        `/market/risk/${encodeURIComponent(symbol)}${exchange ? `?exchange=${encodeURIComponent(exchange)}` : ""}`,
+    risk: (symbol: string, exchange?: string, interval?: string) => {
+      const params = new URLSearchParams();
+      if (exchange) params.set("exchange", exchange);
+      if (interval) params.set("interval", interval);
+      const qs = params.toString();
+      return request<RiskAnalysis>(
+        `/market/risk/${encodeURIComponent(symbol)}${qs ? `?${qs}` : ""}`,
         { auth: true },
-      ),
+      );
+    },
     // "Did you mean...?" for a symbol with no data. OCR confuses look-alike
     // characters on small fonts (T/F, O/0, S/5); the backend tries those swaps
     // and returns only variants that really have market data.

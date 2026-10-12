@@ -1,6 +1,8 @@
 from app.services.ocr_service import preprocess_image, extract_text, parse_chart_metadata
 
-image_path = r"D:\CSPIT\5th semester\Project SGP\backend\test_image\\image.png"
+import os
+
+image_path = os.path.join(os.path.dirname(__file__), "test_image", "image.png")
 
 processed = preprocess_image(image_path)
 texts = extract_text(processed)

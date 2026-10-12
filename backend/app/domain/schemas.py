@@ -14,9 +14,27 @@ class UserLogin(BaseModel):
 class UserResponse(BaseModel):
     id: str
     email: EmailStr
+    created_at: str | None = None
 
     class Config:
         from_attributes = True
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class UserSettingsResponse(BaseModel):
+    theme: str = "dark"
+    default_exchange: str | None = None
+    email_alerts: bool = False
+
+
+class UserSettingsUpdateRequest(BaseModel):
+    theme: str | None = None
+    default_exchange: str | None = None
+    email_alerts: bool | None = None
 
 
 class TokenResponse(BaseModel):
